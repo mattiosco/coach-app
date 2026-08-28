@@ -1,182 +1,69 @@
-import { useEffect, useState } from 'react'
-import {
-  probeCapabilities,
-  isInstalled,
-  serviceWorkerStatus,
-  type Capability,
-  type ServiceWorkerStatus,
-} from './lib/platform'
-import { requestPersistence, estimateUsage, store } from './lib/storage'
+import { useState } from 'react'
+import Fixtures from './screens/Fixtures'
+import Game from './screens/Game'
+import Squad from './screens/Squad'
+import Check from './screens/Check'
+import { DEFAULT_CONFIG, type Fixture } from './domain/types'
+import { activeMatch, newMatch, useSeason } from './state/store'
 
-const BUILD = __BUILD_TIME__
+type Tab = 'game' | 'fixtures' | 'squad' | 'check'
 
-const SW_LABEL: Record<ServiceWorkerStatus, string> = {
-  unsupported: 'not supported',
-  none: 'not registered',
-  registered: 'registered, not yet active',
-  controlling: 'yes — serving from cache',
-}
+const fmt = new Intl.DateTimeFormat(undefined, {
+  weekday: 'short',
+  day: 'numeric',
+  month: 'short',
+  hour: 'numeric',
+  minute: '2-digit',
+})
 
 export default function App() {
-  const [caps] = useState<Capability[]>(probeCapabilities)
-  const [online, setOnline] = useState(navigator.onLine)
-  const [persisted, setPersisted] = useState<boolean | null>(null)
-  const [usage, setUsage] = useState<string | null>(null)
-  const [roundTrip, setRoundTrip] = useState<string>('checking…')
-  const [sw, setSw] = useState<ServiceWorkerStatus | null>(null)
+  const { season, dispatch } = useSeason()
+  const [tab, setTab] = useState<Tab>('game')
+  const running = activeMatch(season)
 
-  useEffect(() => {
-    const on = () => setOnline(true)
-    const off = () => setOnline(false)
-    window.addEventListener('online', on)
-    window.addEventListener('offline', off)
-    return () => {
-      window.removeEventListener('online', on)
-      window.removeEventListener('offline', off)
+  const setUpFixture = (fixture: Fixture) => {
+    // Setting up a new match discards whatever is on the game screen, so never do that
+    // silently to a game already in progress.
+    if (running && running.events.length > 0) {
+      const ok = confirm(
+        `A match is already running (${running.label}). Start a new one and lose it?`,
+      )
+      if (!ok) return
     }
-  }, [])
-
-  useEffect(() => {
-    // The worker often takes control a moment after first paint, so re-check until it does.
-    const tick = () => void serviceWorkerStatus().then(setSw)
-    tick()
-    const id = setInterval(tick, 1000)
-    return () => clearInterval(id)
-  }, [])
-
-  useEffect(() => {
-    void (async () => {
-      setPersisted(await requestPersistence())
-      setUsage(await estimateUsage())
-
-      // Prove the database survives a cold start: read what a previous launch wrote,
-      // then write a fresh stamp for the next one.
-      try {
-        const previous = await store.get<string>('lastOpened')
-        await store.set('lastOpened', new Date().toISOString())
-        setRoundTrip(
-          previous ? `last opened ${new Date(previous).toLocaleString()}` : 'first launch',
-        )
-      } catch (error) {
-        setRoundTrip(`failed: ${String(error)}`)
-      }
-    })()
-  }, [])
+    const label = `v ${fixture.opponent} · ${fmt.format(new Date(fixture.startTime))}`
+    dispatch({
+      type: 'START_MATCH',
+      match: newMatch(
+        fixture,
+        label,
+        {},
+        { ...DEFAULT_CONFIG, totalMinutes: fixture.config.totalMinutes },
+      ),
+    })
+    setTab('game')
+  }
 
   return (
-    <main style={{ padding: 20, maxWidth: 560, margin: '0 auto' }}>
-      <header style={{ marginBottom: 24 }}>
-        <h1 style={{ fontSize: 30, letterSpacing: -0.5 }}>Coach</h1>
-        <p style={{ color: 'var(--muted)', margin: '6px 0 0' }}>
-          Phase 0 — platform check
-        </p>
-      </header>
+    <div className="app">
+      {tab === 'game' && <Game onNoMatch={() => setTab('fixtures')} />}
+      {tab === 'fixtures' && <Fixtures onPick={setUpFixture} />}
+      {tab === 'squad' && <Squad />}
+      {tab === 'check' && <Check />}
 
-      <Card>
-        <Row
-          label="Offline ready"
-          sub="The worker must be controlling, not merely registered"
-          value={SW_LABEL[sw ?? 'none']}
-          state={sw === 'controlling' ? 'ok' : sw === 'registered' ? 'warn' : 'bad'}
-        />
-        <Row
-          label="Installed to home screen"
-          value={isInstalled() ? 'yes' : 'no — still in browser'}
-          state={isInstalled() ? 'ok' : 'warn'}
-        />
-        <Row label="Network" value={online ? 'online' : 'offline'} state="ok" />
-        <Row
-          label="Storage persistence"
-          sub="Stops the season being evicted under storage pressure"
-          value={persisted == null ? '…' : persisted ? 'granted' : 'not granted yet'}
-          state={persisted ? 'ok' : 'warn'}
-        />
-        <Row label="Database" value={roundTrip} state={roundTrip.startsWith('failed') ? 'bad' : 'ok'} />
-        {usage && <Row label="Storage used" value={usage} state="ok" />}
-      </Card>
-
-      <h2 style={{ fontSize: 15, color: 'var(--muted)', margin: '24px 0 10px', fontWeight: 600 }}>
-        CAPABILITIES
-      </h2>
-      <Card>
-        {caps.map((c) => (
-          <Row
-            key={c.id}
-            label={c.label}
-            value={c.ok ? 'available' : 'missing'}
-            sub={c.detail}
-            state={c.ok ? 'ok' : 'bad'}
-          />
-        ))}
-      </Card>
-
-      <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 24, lineHeight: 1.5 }}>
-        Build {BUILD}. To verify offline: install to the home screen, turn on flight mode,
-        force-quit the app, then reopen it. Everything above should still render.
-      </p>
-    </main>
-  )
-}
-
-function Card({ children }: { children: React.ReactNode }) {
-  return (
-    <div
-      style={{
-        background: 'var(--surface)',
-        border: '1px solid var(--line)',
-        borderRadius: 'var(--radius)',
-        overflow: 'hidden',
-      }}
-    >
-      {children}
-    </div>
-  )
-}
-
-type RowState = 'ok' | 'warn' | 'bad'
-
-const DOT: Record<RowState, string> = {
-  ok: 'var(--green)',
-  warn: 'var(--amber)',
-  bad: 'var(--red)',
-}
-
-function Row({
-  label,
-  value,
-  sub,
-  state,
-}: {
-  label: string
-  value: string
-  sub?: string
-  state: RowState
-}) {
-  return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 12,
-        padding: '14px 16px',
-        borderBottom: '1px solid var(--line)',
-      }}
-    >
-      <span
-        aria-hidden
-        style={{
-          width: 10,
-          height: 10,
-          borderRadius: '50%',
-          flexShrink: 0,
-          background: DOT[state],
-        }}
-      />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontWeight: 600 }}>{label}</div>
-        {sub && <div style={{ color: 'var(--muted)', fontSize: 13 }}>{sub}</div>}
-      </div>
-      <div style={{ color: 'var(--muted)', fontSize: 14, textAlign: 'right' }}>{value}</div>
+      <nav className="tabs">
+        <button aria-current={tab === 'game'} onClick={() => setTab('game')}>
+          {running ? '● Game' : 'Game'}
+        </button>
+        <button aria-current={tab === 'fixtures'} onClick={() => setTab('fixtures')}>
+          Fixtures
+        </button>
+        <button aria-current={tab === 'squad'} onClick={() => setTab('squad')}>
+          Squad
+        </button>
+        <button aria-current={tab === 'check'} onClick={() => setTab('check')}>
+          Check
+        </button>
+      </nav>
     </div>
   )
 }
