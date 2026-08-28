@@ -61,3 +61,21 @@ export async function acquireWakeLock(): Promise<(() => void) | null> {
     return null
   }
 }
+
+export type ServiceWorkerStatus =
+  | 'unsupported'
+  | 'none'
+  | 'registered'
+  | 'controlling'
+
+/**
+ * Whether the app is actually being served by the service worker. "registered" is not
+ * good enough: until a worker is *controlling* the page, a cold start with no signal
+ * will still fail. This is the single most important thing to confirm on the phone.
+ */
+export async function serviceWorkerStatus(): Promise<ServiceWorkerStatus> {
+  if (!('serviceWorker' in navigator)) return 'unsupported'
+  if (navigator.serviceWorker.controller) return 'controlling'
+  const registrations = await navigator.serviceWorker.getRegistrations()
+  return registrations.length > 0 ? 'registered' : 'none'
+}

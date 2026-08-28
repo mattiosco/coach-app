@@ -1,8 +1,21 @@
 import { useEffect, useState } from 'react'
-import { probeCapabilities, isInstalled, type Capability } from './lib/platform'
+import {
+  probeCapabilities,
+  isInstalled,
+  serviceWorkerStatus,
+  type Capability,
+  type ServiceWorkerStatus,
+} from './lib/platform'
 import { requestPersistence, estimateUsage, store } from './lib/storage'
 
 const BUILD = __BUILD_TIME__
+
+const SW_LABEL: Record<ServiceWorkerStatus, string> = {
+  unsupported: 'not supported',
+  none: 'not registered',
+  registered: 'registered, not yet active',
+  controlling: 'yes — serving from cache',
+}
 
 export default function App() {
   const [caps] = useState<Capability[]>(probeCapabilities)
@@ -10,6 +23,7 @@ export default function App() {
   const [persisted, setPersisted] = useState<boolean | null>(null)
   const [usage, setUsage] = useState<string | null>(null)
   const [roundTrip, setRoundTrip] = useState<string>('checking…')
+  const [sw, setSw] = useState<ServiceWorkerStatus | null>(null)
 
   useEffect(() => {
     const on = () => setOnline(true)
@@ -20,6 +34,14 @@ export default function App() {
       window.removeEventListener('online', on)
       window.removeEventListener('offline', off)
     }
+  }, [])
+
+  useEffect(() => {
+    // The worker often takes control a moment after first paint, so re-check until it does.
+    const tick = () => void serviceWorkerStatus().then(setSw)
+    tick()
+    const id = setInterval(tick, 1000)
+    return () => clearInterval(id)
   }, [])
 
   useEffect(() => {
@@ -51,11 +73,26 @@ export default function App() {
       </header>
 
       <Card>
-        <Row label="Installed to home screen" value={isInstalled() ? 'yes' : 'no — still in browser'} ok={isInstalled()} />
-        <Row label="Network" value={online ? 'online' : 'offline'} ok />
-        <Row label="Storage persistence" value={persisted == null ? '…' : persisted ? 'granted' : 'not granted'} ok={persisted !== false} />
-        <Row label="Database" value={roundTrip} ok={!roundTrip.startsWith('failed')} />
-        {usage && <Row label="Storage used" value={usage} ok />}
+        <Row
+          label="Offline ready"
+          sub="The worker must be controlling, not merely registered"
+          value={SW_LABEL[sw ?? 'none']}
+          state={sw === 'controlling' ? 'ok' : sw === 'registered' ? 'warn' : 'bad'}
+        />
+        <Row
+          label="Installed to home screen"
+          value={isInstalled() ? 'yes' : 'no — still in browser'}
+          state={isInstalled() ? 'ok' : 'warn'}
+        />
+        <Row label="Network" value={online ? 'online' : 'offline'} state="ok" />
+        <Row
+          label="Storage persistence"
+          sub="Stops the season being evicted under storage pressure"
+          value={persisted == null ? '…' : persisted ? 'granted' : 'not granted yet'}
+          state={persisted ? 'ok' : 'warn'}
+        />
+        <Row label="Database" value={roundTrip} state={roundTrip.startsWith('failed') ? 'bad' : 'ok'} />
+        {usage && <Row label="Storage used" value={usage} state="ok" />}
       </Card>
 
       <h2 style={{ fontSize: 15, color: 'var(--muted)', margin: '24px 0 10px', fontWeight: 600 }}>
@@ -63,7 +100,13 @@ export default function App() {
       </h2>
       <Card>
         {caps.map((c) => (
-          <Row key={c.id} label={c.label} value={c.ok ? 'available' : 'missing'} sub={c.detail} ok={c.ok} />
+          <Row
+            key={c.id}
+            label={c.label}
+            value={c.ok ? 'available' : 'missing'}
+            sub={c.detail}
+            state={c.ok ? 'ok' : 'bad'}
+          />
         ))}
       </Card>
 
@@ -90,7 +133,25 @@ function Card({ children }: { children: React.ReactNode }) {
   )
 }
 
-function Row({ label, value, sub, ok }: { label: string; value: string; sub?: string; ok: boolean }) {
+type RowState = 'ok' | 'warn' | 'bad'
+
+const DOT: Record<RowState, string> = {
+  ok: 'var(--green)',
+  warn: 'var(--amber)',
+  bad: 'var(--red)',
+}
+
+function Row({
+  label,
+  value,
+  sub,
+  state,
+}: {
+  label: string
+  value: string
+  sub?: string
+  state: RowState
+}) {
   return (
     <div
       style={{
@@ -108,7 +169,7 @@ function Row({ label, value, sub, ok }: { label: string; value: string; sub?: st
           height: 10,
           borderRadius: '50%',
           flexShrink: 0,
-          background: ok ? 'var(--green)' : 'var(--red)',
+          background: DOT[state],
         }}
       />
       <div style={{ flex: 1, minWidth: 0 }}>
