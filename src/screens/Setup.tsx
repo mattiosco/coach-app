@@ -49,6 +49,35 @@ export default function Setup({ match, onLeave }: { match: StoredMatch; onLeave:
 
   const ready = draft.gk !== null && outfieldSlots.every((s) => draft.assignments[s.id])
 
+  const playedEarlier = present.some((p) => (shares.get(p.id)?.priorCreditMs ?? 0) > 0)
+
+  /**
+   * Fill the line-up from who is owed most.
+   *
+   * The keeper is chosen from those who have not kept today, preferring whoever has had
+   * the most running already — she loses the least by going in goal. The four most owed
+   * of the rest start.
+   */
+  const suggestLineup = () => {
+    const kept = new Set(
+      present.filter((p) => (day.priorGkMs[p.id] ?? 0) > 0).map((p) => p.id),
+    )
+    const keeperPool = present.filter((p) => !kept.has(p.id))
+    const keeper = [...(keeperPool.length ? keeperPool : present)].sort(
+      (a, b) => (shares.get(b.id)?.dayCreditMs ?? 0) - (shares.get(a.id)?.dayCreditMs ?? 0),
+    )[0]
+    if (!keeper) return
+
+    const rest = owedFirst.filter((p) => p.id !== keeper.id)
+    const assignments: Record<SlotId, PlayerId | null> = {}
+    outfieldSlots.forEach((slot, i) => {
+      assignments[slot.id] = rest[i]?.id ?? null
+    })
+    if (gkSlot) assignments[gkSlot.id] = keeper.id
+    update({ gk: keeper.id, assignments })
+    setPicking(null)
+  }
+
   const assign = (slotId: SlotId, playerId: PlayerId | null) => {
     const next = { ...draft.assignments }
     // A player can only be in one place, so clear her from anywhere else first.
@@ -176,6 +205,42 @@ export default function Setup({ match, onLeave }: { match: StoredMatch; onLeave:
           Tap a position to choose who plays there. The keeper is the green one at the
           bottom. Everything here is saved as you go.
         </p>
+      )}
+
+      {playedEarlier && (
+        <>
+          <div className="section-title">EARLIER TODAY — MOST OWED FIRST</div>
+          <div className="card">
+            {owedFirst.map((player) => {
+              const share = shares.get(player.id)
+              const earlier = Math.round((share?.priorPlayedMs ?? 0) / MINUTE)
+              const inGoal = Math.round((share?.priorGkMs ?? 0) / MINUTE)
+              const owed = Math.round((share?.gameTargetMs ?? 0) / MINUTE)
+              const starting =
+                draft.gk === player.id || Object.values(draft.assignments).includes(player.id)
+              return (
+                <div className="row" key={player.id}>
+                  <span
+                    className="grow"
+                    style={{ fontWeight: earlier === 0 ? 700 : 400, color: earlier === 0 ? 'var(--amber)' : undefined }}
+                  >
+                    {player.name}
+                    {starting && <span className="muted small"> · starting</span>}
+                  </span>
+                  <span className="muted small" style={{ marginRight: 10 }}>
+                    {earlier === 0
+                      ? 'no minutes yet'
+                      : `${earlier} min${inGoal > 0 ? ' in goal' : ''}`}
+                  </span>
+                  <span className={`pill ${owed > 0 ? 'behind' : 'level'}`}>owed {owed}</span>
+                </div>
+              )
+            })}
+          </div>
+          <button className="btn-block" style={{ marginTop: 10 }} onClick={suggestLineup}>
+            Pick the line-up from who is owed most
+          </button>
+        </>
       )}
 
       <div className="section-title">WHO IS HERE</div>

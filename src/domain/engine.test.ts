@@ -247,6 +247,7 @@ describe('match day', () => {
     // Ava kept goal in game one; Jo never got on.
     const day = {
       priorCreditMs: { ava: 10 * MINUTE, bea: 20 * MINUTE, jo: 0 },
+      priorPlayedMs: { ava: 20 * MINUTE, bea: 20 * MINUTE, jo: 0 },
       dayCreditMs: 180 * MINUTE, // two games of 90
       starts: { ava: 1, bea: 1 },
       priorGkMs: { ava: 20 * MINUTE },
@@ -266,6 +267,7 @@ describe('match day', () => {
     const state = foldMatch(roster, init, [lineup(), { t: 'CLOCK_START', at: 0, clock: 0 }])
     const day = {
       priorCreditMs: { bea: 14 * MINUTE, jo: 2 * MINUTE },
+      priorPlayedMs: { bea: 14 * MINUTE, jo: 2 * MINUTE },
       dayCreditMs: 180 * MINUTE,
       starts: { bea: 1 },
       priorGkMs: {},
@@ -297,6 +299,7 @@ describe('match day', () => {
     const day = {
       // Ava kept last game (10 credit), Bea ran the whole game (20 credit).
       priorCreditMs: { ava: 10 * MINUTE, bea: 20 * MINUTE },
+      priorPlayedMs: { ava: 20 * MINUTE, bea: 20 * MINUTE },
       dayCreditMs: 180 * MINUTE,
       starts: { ava: 1, bea: 1 },
       priorGkMs: { ava: 20 * MINUTE },

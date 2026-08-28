@@ -14,6 +14,7 @@ import {
   foldMatch,
   gameCreditSupplyMs,
   goalMsFor,
+  minutesPlayedMs,
   undoLast,
   type DayContext,
   type MatchInit,
@@ -323,6 +324,7 @@ export function dayContextFor(season: Season, match: StoredMatch): DayContext {
   const siblings = season.matches.filter((m) => m.dayKey === match.dayKey && m.id !== match.id)
 
   const priorCreditMs: Record<PlayerId, number> = {}
+  const priorPlayedMs: Record<PlayerId, number> = {}
   const priorGkMs: Record<PlayerId, number> = {}
   const starts: Record<PlayerId, number> = {}
 
@@ -334,6 +336,8 @@ export function dayContextFor(season: Season, match: StoredMatch): DayContext {
         (priorCreditMs[player.id] ?? 0) +
         creditMs(state, player.id, clock, sibling.config.gkWeight)
       priorGkMs[player.id] = (priorGkMs[player.id] ?? 0) + goalMsFor(state, player.id, clock)
+      priorPlayedMs[player.id] =
+        (priorPlayedMs[player.id] ?? 0) + minutesPlayedMs(state, player.id, clock)
     }
     for (const id of state.starters) starts[id] = (starts[id] ?? 0) + 1
   }
@@ -352,6 +356,7 @@ export function dayContextFor(season: Season, match: StoredMatch): DayContext {
   const perGame = gameCreditSupplyMs(match.config, match.init.slots)
   return {
     priorCreditMs,
+    priorPlayedMs,
     priorGkMs,
     starts,
     dayCreditMs: perGame * gamesInDay,

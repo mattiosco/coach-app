@@ -291,6 +291,10 @@ export interface Share {
   dayCreditMs: number
   /** Credit already banked in the day's earlier game. */
   priorCreditMs: number
+  /** Minutes actually played in the day's earlier game. */
+  priorPlayedMs: number
+  /** Of those, minutes spent in goal. */
+  priorGkMs: number
   /** Fair share of the day's credit, across every game of the day. */
   targetMs: number
   /**
@@ -317,6 +321,8 @@ export interface Share {
 export interface DayContext {
   /** Credit banked in the day's other games. */
   priorCreditMs: Record<PlayerId, number>
+  /** Actual minutes played in those games — what a parent would count. */
+  priorPlayedMs: Record<PlayerId, number>
   /** Total credit available across every game of the day, this one included. */
   dayCreditMs: number
   /** Starts already made today. */
@@ -337,6 +343,7 @@ export function gameCreditSupplyMs(config: MatchConfig, slots: Slot[]): number {
 export function soloDay(config: MatchConfig, slots: Slot[]): DayContext {
   return {
     priorCreditMs: {},
+    priorPlayedMs: {},
     dayCreditMs: gameCreditSupplyMs(config, slots),
     starts: {},
     priorGkMs: {},
@@ -397,6 +404,8 @@ export function fairShares(
       creditMs: credit,
       dayCreditMs: dayCredit,
       priorCreditMs: prior,
+      priorPlayedMs: day.priorPlayedMs[player.id] ?? 0,
+      priorGkMs: day.priorGkMs[player.id] ?? 0,
       targetMs,
       gameTargetMs: targetMs - prior,
       deltaMs: dayCredit - targetMs,
