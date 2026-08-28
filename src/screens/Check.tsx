@@ -7,6 +7,7 @@ import {
   type ServiceWorkerStatus,
 } from '../lib/platform'
 import { requestPersistence, estimateUsage, store } from '../lib/storage'
+import { useSeason } from '../state/store'
 
 const BUILD = __BUILD_TIME__
 
@@ -18,6 +19,7 @@ const SW_LABEL: Record<ServiceWorkerStatus, string> = {
 }
 
 export default function Check() {
+  const { season, dispatch } = useSeason()
   const [caps] = useState<Capability[]>(probeCapabilities)
   const [online, setOnline] = useState(navigator.onLine)
   const [persisted, setPersisted] = useState<boolean | null>(null)
@@ -109,6 +111,45 @@ export default function Check() {
           />
         ))}
       </Card>
+
+      <h2 style={{ fontSize: 15, color: 'var(--muted)', margin: '24px 0 10px', fontWeight: 600 }}>
+        YOUR DATA
+      </h2>
+      <Card>
+        <Row
+          label="Squad"
+          value={`${season.players.length} ${season.players.length === 1 ? 'player' : 'players'}`}
+          state="ok"
+          sub="Stored only on this device — never uploaded"
+        />
+        <Row label="Fixtures" value={`${season.fixtures.length} saved`} state="ok" />
+        <Row label="Saved matches" value={`${season.matches.length}`} state="ok" />
+      </Card>
+
+      <div className="stack" style={{ marginTop: 12 }}>
+        <button
+          className="btn-ghost btn-danger"
+          disabled={season.matches.length === 0}
+          onClick={() => {
+            if (!confirm(`Delete all ${season.matches.length} saved matches? The squad and fixtures stay.`)) return
+            for (const m of season.matches) dispatch({ type: 'DELETE_MATCH', id: m.id })
+          }}
+        >
+          Clear saved matches
+        </button>
+        <button
+          className="btn-ghost btn-danger"
+          onClick={() => {
+            // Two prompts on purpose: this is the one genuinely unrecoverable button in
+            // the app, and there is no backup to restore from yet.
+            if (!confirm('Erase the squad, fixtures and every match from this device?')) return
+            if (!confirm('Really erase everything? This cannot be undone.')) return
+            void store.del('season/v1').then(() => location.reload())
+          }}
+        >
+          Erase everything on this device
+        </button>
+      </div>
 
       <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 24, lineHeight: 1.5 }}>
         Build {BUILD}. To verify offline: install to the home screen, turn on flight mode,

@@ -10,13 +10,13 @@ import {
 } from '../domain/engine'
 import type { MatchEvent, NewMatchEvent } from '../domain/events'
 import { msToNextShift, shiftNumber, suggestSubs } from '../domain/suggest'
-import { MID_SLOT, type Availability, type PlayerId } from '../domain/types'
+import { DEFAULT_CONFIG, MID_SLOT, type Availability, type PlayerId } from '../domain/types'
 import { acquireWakeLock } from '../lib/platform'
-import { activeMatch, stateOf, useSeason, type StoredMatch } from '../state/store'
+import { activeMatch, newMatch, stateOf, useSeason, type StoredMatch } from '../state/store'
 import Setup from './Setup'
 
 export default function Game({ onNoMatch }: { onNoMatch: () => void }) {
-  const { season } = useSeason()
+  const { season, dispatch } = useSeason()
   const match = activeMatch(season)
 
   if (!match) {
@@ -24,11 +24,31 @@ export default function Game({ onNoMatch }: { onNoMatch: () => void }) {
       <div className="screen">
         <h2 style={{ fontSize: 24 }}>No match running</h2>
         <p className="muted small" style={{ lineHeight: 1.5 }}>
-          Pick a fixture to set one up.
+          Pick a real fixture, or start a practice match to have a play. A practice match
+          works exactly like a real one — it is just not tied to a fixture.
         </p>
-        <button className="btn-primary btn-block" onClick={onNoMatch}>
-          Go to fixtures
-        </button>
+        <div className="stack">
+          <button className="btn-primary btn-block" onClick={onNoMatch}>
+            Go to fixtures
+          </button>
+          <button
+            className="btn-block"
+            disabled={season.players.length < 2}
+            onClick={() =>
+              dispatch({
+                type: 'START_MATCH',
+                match: newMatch(null, 'Practice match', {}, DEFAULT_CONFIG),
+              })
+            }
+          >
+            Start a practice match
+          </button>
+        </div>
+        {season.players.length < 2 && (
+          <p className="muted small" style={{ marginTop: 12 }}>
+            Add some players on the Squad tab first.
+          </p>
+        )}
       </div>
     )
   }
@@ -387,6 +407,17 @@ function Live({ match, state }: { match: StoredMatch; state: MatchState }) {
             }}
           >
             End match
+          </button>
+        </div>
+        <div className="row">
+          <button
+            className="btn-ghost btn-danger btn-block"
+            onClick={() => {
+              if (!confirm('Throw this match away? Nothing about it is kept.')) return
+              dispatch({ type: 'DELETE_MATCH', id: match.id })
+            }}
+          >
+            Discard — keep no record
           </button>
         </div>
       </div>

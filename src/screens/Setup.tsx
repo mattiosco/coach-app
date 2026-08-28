@@ -196,6 +196,14 @@ export default function Setup({ match }: { match: StoredMatch }) {
       >
         {ready ? 'Confirm line-up' : 'Pick a keeper and a full line-up'}
       </button>
+
+      <button
+        className="btn-ghost btn-block btn-danger"
+        style={{ marginTop: 10 }}
+        onClick={() => dispatch({ type: 'DELETE_MATCH', id: match.id })}
+      >
+        Cancel this match
+      </button>
     </div>
   )
 }
