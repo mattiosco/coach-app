@@ -86,7 +86,4 @@ export const SLOT_POSITIONS: Record<string, { x: number; y: number }> = {
   right: { x: 81, y: 24 },
 }
 
-/** Fallback for slots added mid-game, spread along the front. */
-export function slotPosition(slotId: string, index: number): { x: number; y: number } {
-  return SLOT_POSITIONS[slotId] ?? { x: 12 + ((index * 27) % 76), y: 40 }
-}
+

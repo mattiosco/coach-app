@@ -272,15 +272,23 @@ function Live({
         </div>
       </div>
 
-      <div className={`clock ${running ? 'running' : 'paused'}`} style={{ margin: '8px 0 2px' }}>
-        {formatClock(clock)}
-      </div>
-      <div className="small muted" style={{ textAlign: 'center', marginBottom: 10 }}>
-        {clock >= totalMs
-          ? 'Full time reached'
-          : `${formatClock(totalMs - clock)} left · next sub in ${formatClock(
-              msToNextShift(clock, match.config.shiftMinutes),
-            )}`}
+      {/* Sticky: both clocks stay readable however far down the screen you scroll. */}
+      <div className="clockbar">
+        <div className={`clock ${running ? 'running' : 'paused'}`}>{formatClock(clock)}</div>
+        <div className="clockbar-side">
+          <div>
+            <span className="clockbar-num">
+              {clock >= totalMs ? '0:00' : formatClock(totalMs - clock)}
+            </span>
+            <span className="clockbar-cap">left</span>
+          </div>
+          <div>
+            <span className="clockbar-num" style={{ color: 'var(--amber)' }}>
+              {formatClock(msToNextShift(clock, match.config.shiftMinutes))}
+            </span>
+            <span className="clockbar-cap">to sub</span>
+          </div>
+        </div>
       </div>
 
       <div className="inline" style={{ marginBottom: 12 }}>
@@ -463,6 +471,10 @@ function Live({
                   ? MID_SLOT
                   : { id: `slot-${state.slots.length}`, label: 'Extra', isGK: false }
                 append({ t: 'SLOT_ADD', slot: next, playerId: null })
+                // Open the picker straight away: adding a position is only ever the first
+                // half of putting someone in it.
+                setSelectedSlot(next.id)
+                document.querySelector('.pitch')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
               }}
             >
               +

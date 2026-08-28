@@ -316,3 +316,37 @@ button:disabled { opacity: 0.4; }
 .bench-chip .who { font-size: 17px; font-weight: 700; }
 .bench-chip.selected { border-color: var(--amber); box-shadow: 0 0 0 2px var(--amber); }
 .bench-chip.planned { border-color: var(--amber); opacity: 0.65; }
+
+/* Both clocks stay pinned to the top while the rest of the screen scrolls. */
+.clockbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 0 -16px 10px;
+  padding: 6px 16px 8px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+}
+.clockbar .clock { font-size: 46px; text-align: left; }
+.clockbar-side {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-left: auto;
+  text-align: right;
+}
+.clockbar-num {
+  font-variant-numeric: tabular-nums;
+  font-size: 17px;
+  font-weight: 700;
+}
+.clockbar-cap {
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: 5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
