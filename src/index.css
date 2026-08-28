@@ -1,0 +1,56 @@
+/* Sunlight-readable, thumb-first. Dark ground, high-contrast text, big targets. */
+:root {
+  --bg: #0f1310;
+  --surface: #1a211c;
+  --surface-2: #243029;
+  --line: #35453b;
+  --text: #f2f6f3;
+  --muted: #9fb0a6;
+  --green: #2f9e52;
+  --green-dim: #216e39;
+  --amber: #e8a33d;
+  --red: #d4553f;
+
+  --tap: 56px; /* minimum touch target */
+  --radius: 14px;
+
+  color-scheme: dark;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-synthesis: none;
+  -webkit-text-size-adjust: 100%;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  /* Never bounce or rubber-band: this is an app, not a document. */
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Respect the notch and the home indicator. */
+#root {
+  padding:
+    env(safe-area-inset-top) env(safe-area-inset-right)
+    env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  min-height: var(--tap);
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  padding: 0 18px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+button:active { transform: scale(0.98); }
+
+h1, h2, h3 { margin: 0; line-height: 1.2; }
