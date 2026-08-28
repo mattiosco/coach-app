@@ -114,15 +114,19 @@ reach, portrait lock, Screen Wake Lock API so the phone doesn't sleep mid-game.
 
 ## 7. Build order
 
-| Phase | Deliverable |
-|---|---|
-| 0 | Scaffold + PWA + deploy, installed on your phone. Do this first to de-risk install/offline early. |
-| 1 | Squad management and match setup, persisted. |
-| 2 | Clock + event log + derived minutes + manual subs + undo. Usable at a real game. |
-| 3 | Fairness deltas, shift buzzer, sub suggestions. |
-| 4 | Flexible formats: a-side stepper, loans, periods, late arrivals. |
-| 5 | Post-game summary, season ledger, JSON export/import backup. |
-| 6 | Polish: wake lock, haptics, sunlight theme, install prompt. |
+| Phase | Deliverable | Status |
+|---|---|---|
+| 0 | Scaffold + PWA + deploy, installed on your phone. | **Done** — live on GitHub Pages |
+| 1 | Squad management and match setup, persisted. | **Done** |
+| 2 | Clock + event log + derived minutes + manual subs + undo. | **Done** |
+| 3 | Fairness deltas, shift buzzer, sub suggestions. | **Done** |
+| 4 | Flexible formats: a-side stepper, loans, half time, late arrivals. | **Done** except late arrivals |
+| — | Fixture sync from Squadi, editable. | **Done** |
+| 5 | Post-game summary, 3-2-1 votes, season ledger, JSON export/import. | Not started |
+| 6 | Polish: install prompt, sunlight tuning on a real screen. | Not started |
+
+Wake lock and haptics landed early, in phase 2, because the game screen needed them
+to be usable at all.
 
 End of phase 2 is the first genuinely useful version — worth taking to a game before
 building the rest.
