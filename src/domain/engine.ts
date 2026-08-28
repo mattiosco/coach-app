@@ -289,8 +289,16 @@ export interface Share {
   creditMs: number
   /** Credit across the whole match day, including other games already played. */
   dayCreditMs: number
-  /** Fair share of the day's credit. */
+  /** Credit already banked in the day's earlier game. */
+  priorCreditMs: number
+  /** Fair share of the day's credit, across every game of the day. */
   targetMs: number
+  /**
+   * What she is owed in *this* match: her whole-day share less what she already banked
+   * earlier today. This is the number that means something while a game is on — the day
+   * figure would ask for time this match cannot give her.
+   */
+  gameTargetMs: number
   /** Positive means ahead of her share, negative means owed time. */
   deltaMs: number
   onField: boolean
@@ -380,6 +388,7 @@ export function fairShares(
     const dayCredit = (day.priorCreditMs[player.id] ?? 0) + credit
     const weight = availability.get(player.id) ?? 0
     const targetMs = totalWeight === 0 ? 0 : (day.dayCreditMs * weight) / totalWeight
+    const prior = day.priorCreditMs[player.id] ?? 0
 
     return {
       playerId: player.id,
@@ -387,7 +396,9 @@ export function fairShares(
       gkMs,
       creditMs: credit,
       dayCreditMs: dayCredit,
+      priorCreditMs: prior,
       targetMs,
+      gameTargetMs: targetMs - prior,
       deltaMs: dayCredit - targetMs,
       onField: isOnField(state, player.id),
       available: state.availability[player.id] === 'available',

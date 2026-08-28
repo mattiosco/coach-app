@@ -201,10 +201,8 @@ export function reducer(season: Season, action: Action): Season {
       return patchMatch(season, action.id, (m) => ({ ...m, plannedSubs: action.planned }))
 
     case 'END_MATCH':
-      return {
-        ...patchMatch(season, action.id, (m) => ({ ...m, endedAt: action.at })),
-        activeMatchId: null,
-      }
+      // Stay on the match so the summary comes up straight away; the coach closes it.
+      return patchMatch(season, action.id, (m) => ({ ...m, endedAt: action.at, plannedSubs: [] }))
 
     case 'DELETE_MATCH':
       return {
@@ -269,12 +267,15 @@ export function newMatch(
   availability: Record<PlayerId, Availability>,
   config: MatchConfig = DEFAULT_CONFIG,
 ): StoredMatch {
+  const id = crypto.randomUUID()
   return {
-    id: crypto.randomUUID(),
+    id,
     fixtureId: fixture?.id ?? null,
     label,
     venue: fixture?.venue ?? '',
-    dayKey: dayKeyOf(fixture?.startTime ?? Date.now()),
+    // A practice match is its own day: it must not pool minutes with the real fixtures
+    // that happen to fall on the same date.
+    dayKey: fixture ? dayKeyOf(fixture.startTime) : `practice-${id}`,
     config,
     init: { slots: DEFAULT_SLOTS, availability },
     events: [],

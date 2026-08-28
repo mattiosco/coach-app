@@ -221,6 +221,17 @@ button:disabled { opacity: 0.4; }
   touch-action: manipulation;
 }
 
+/*
+ * Pitch markings are decoration only. Without this they swallow taps: ::after is the
+ * last child of .pitch, so the centre circle paints above the magnets and made the Mid
+ * position — sitting right under it — completely untappable.
+ */
+.pitch::before,
+.pitch::after,
+.goal-box {
+  pointer-events: none;
+}
+
 /* Halfway line and centre circle, so the shape reads as a pitch at a glance. */
 .pitch::before {
   content: '';
@@ -253,10 +264,12 @@ button:disabled { opacity: 0.4; }
 .magnet {
   position: absolute;
   transform: translate(-50%, -50%);
-  min-width: 74px;
-  max-width: 40%;
-  min-height: 52px;
-  padding: 6px 8px;
+  /* Above the pitch markings, whatever order they paint in. */
+  z-index: 2;
+  min-width: 86px;
+  max-width: 42%;
+  min-height: 60px;
+  padding: 6px 10px;
   border-radius: 12px;
   border: 2px solid rgba(255, 255, 255, 0.3);
   background: #0f1310;
@@ -284,6 +297,12 @@ button:disabled { opacity: 0.4; }
   text-overflow: ellipsis;
   max-width: 100%;
 }
+/*
+ * The generic button:active rule replaces transform outright, which would drop the
+ * centring translate and make every magnet jump on touch. Re-state both together.
+ */
+.magnet:active { transform: translate(-50%, -50%) scale(0.97); }
+
 .magnet.gk { border-color: var(--green); background: #14261a; }
 .magnet.empty { border-style: dashed; background: rgba(0,0,0,0.35); }
 .magnet.empty .who { color: var(--muted); font-weight: 600; font-size: 15px; }

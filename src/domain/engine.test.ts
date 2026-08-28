@@ -262,6 +262,27 @@ describe('match day', () => {
     expect(byId.get('ava')!.deltaMs).toBeLessThan(byId.get('bea')!.deltaMs)
   })
 
+  it('asks only for what this match can give, counting the earlier game', () => {
+    const state = foldMatch(roster, init, [lineup(), { t: 'CLOCK_START', at: 0, clock: 0 }])
+    const day = {
+      priorCreditMs: { bea: 14 * MINUTE, jo: 2 * MINUTE },
+      dayCreditMs: 180 * MINUTE,
+      starts: { bea: 1 },
+      priorGkMs: {},
+    }
+    const byId = new Map(fairShares(roster, state, config, 0, day).map((s) => [s.playerId, s]))
+
+    // Everyone is chasing 18 across the day...
+    expect(mins(byId.get('bea')!.targetMs)).toBeCloseTo(18, 1)
+    // ...but this match only owes them the remainder of it.
+    expect(mins(byId.get('bea')!.gameTargetMs)).toBeCloseTo(4, 1)
+    expect(mins(byId.get('jo')!.gameTargetMs)).toBeCloseTo(16, 1)
+    // Someone who did not play earlier is owed a full day's share in this one game.
+    expect(mins(byId.get('hana')!.gameTargetMs)).toBeCloseTo(18, 1)
+    // The earlier game's minutes are carried, not forgotten.
+    expect(mins(byId.get('bea')!.priorCreditMs)).toBe(14)
+  })
+
   it('puts the first game keeper ahead of a full-game outfielder in the queue', () => {
     const state = foldMatch(roster, init, [
       {

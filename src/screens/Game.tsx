@@ -23,6 +23,7 @@ import {
 } from '../state/store'
 import PitchMap from '../ui/PitchMap'
 import Setup from './Setup'
+import Summary from './Summary'
 
 export default function Game({ onNoMatch }: { onNoMatch: () => void }) {
   const { season, dispatch } = useSeason()
@@ -30,6 +31,9 @@ export default function Game({ onNoMatch }: { onNoMatch: () => void }) {
 
   if (!match) {
     const parked = season.matches.filter((m) => !m.endedAt)
+    const played = [...season.matches]
+      .filter((m) => m.endedAt)
+      .sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0))
     return (
       <div className="screen">
         <h2 style={{ fontSize: 24 }}>No match running</h2>
@@ -91,6 +95,32 @@ export default function Game({ onNoMatch }: { onNoMatch: () => void }) {
           </>
         )}
 
+        {played.length > 0 && (
+          <>
+            <div className="section-title">PLAYED — TIMES AND VOTES</div>
+            <div className="stack">
+              {played.map((m) => (
+                <div className="card" key={m.id}>
+                  <div className="row">
+                    <div className="grow">
+                      <div style={{ fontWeight: 700 }}>{m.label}</div>
+                      <div className="small muted">
+                        {m.endedAt ? new Date(m.endedAt).toLocaleDateString() : ''}
+                      </div>
+                    </div>
+                    <button
+                      className="btn-sm"
+                      onClick={() => dispatch({ type: 'SET_ACTIVE', id: m.id })}
+                    >
+                      View
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
         {season.players.length < 2 && (
           <p className="muted small" style={{ marginTop: 12 }}>
             Add some players on the Squad tab first.
@@ -102,6 +132,8 @@ export default function Game({ onNoMatch }: { onNoMatch: () => void }) {
 
   const state = stateOf(season, match)
   const leave = () => dispatch({ type: 'SET_ACTIVE', id: null })
+
+  if (match.endedAt) return <Summary match={match} onDone={leave} />
 
   return hasStarted(match) ? (
     <Live match={match} state={state} onLeave={leave} />
@@ -446,6 +478,41 @@ function Live({
           so you can tell the girls — nothing moves until you tap Make subs.
         </p>
       )}
+
+      <div className="section-title">
+        {shares.some((s) => s.priorCreditMs > 0) ? 'TIME ON — TODAY INCLUDED' : 'TIME ON SO FAR'}
+      </div>
+      <div className="card">
+        {[...shares]
+          .filter((s) => state.availability[s.playerId] !== 'absent')
+          .sort((a, b) => b.playedMs - a.playedMs)
+          .map((s) => (
+            <div className="row" key={s.playerId}>
+              <span className="grow" style={{ fontWeight: s.onField ? 700 : 400 }}>
+                {nameOf(s.playerId)}
+                {s.onField && <span className="muted small"> · on</span>}
+                {state.availability[s.playerId] === 'loaned' && (
+                  <span className="muted small"> · lent out</span>
+                )}
+                {s.priorCreditMs > 0 && (
+                  <div className="muted small">
+                    {Math.round(s.priorCreditMs / MINUTE)} min earlier today
+                  </div>
+                )}
+              </span>
+              <span
+                style={{
+                  fontVariantNumeric: 'tabular-nums',
+                  fontWeight: 700,
+                  marginRight: 8,
+                }}
+              >
+                {Math.round(s.playedMs / MINUTE)} min
+              </span>
+              <DeltaPill share={s} />
+            </div>
+          ))}
+      </div>
 
       <div className="section-title">GAME</div>
       <div className="card">
