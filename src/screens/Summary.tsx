@@ -147,6 +147,21 @@ export default function Summary({ match, onDone }: { match: StoredMatch; onDone:
       <button className="btn-primary btn-block" style={{ marginTop: 18 }} onClick={onDone}>
         Done
       </button>
+
+      <button
+        className="btn-ghost btn-block btn-danger"
+        style={{ marginTop: 10 }}
+        onClick={() => {
+          if (!confirm(`Delete "${match.label}" for good? Its minutes stop counting.`)) return
+          dispatch({ type: 'DELETE_MATCH', id: match.id })
+        }}
+      >
+        Delete this match
+      </button>
+      <p className="muted small" style={{ margin: '8px 0 0', lineHeight: 1.5 }}>
+        Deleting takes these minutes out of the day, so a practice run does not count
+        toward the real games.
+      </p>
     </div>
   )
 }

@@ -127,7 +127,7 @@ function patchMatch(season: Season, id: MatchId, fn: (m: StoredMatch) => StoredM
 export function reducer(season: Season, action: Action): Season {
   switch (action.type) {
     case 'LOAD':
-      return action.season
+      return migrate(action.season)
 
     case 'ADD_PLAYER':
       return {
@@ -210,6 +210,24 @@ export function reducer(season: Season, action: Action): Season {
         matches: season.matches.filter((m) => m.id !== action.id),
         activeMatchId: season.activeMatchId === action.id ? null : season.activeMatchId,
       }
+  }
+}
+
+/**
+ * Repairs to stored data on load.
+ *
+ * Practice matches used to take the calendar date as their day key, so a kickabout used
+ * to test the app pooled its minutes with the real fixtures that evening and skewed
+ * everyone's fair share. Give any such match a day of its own.
+ */
+function migrate(season: Season): Season {
+  return {
+    ...season,
+    matches: season.matches.map((m) =>
+      m.fixtureId === null && !m.dayKey.startsWith('practice-')
+        ? { ...m, dayKey: `practice-${m.id}` }
+        : m,
+    ),
   }
 }
 

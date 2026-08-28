@@ -114,6 +114,16 @@ export default function Game({ onNoMatch }: { onNoMatch: () => void }) {
                     >
                       View
                     </button>
+                    <button
+                      className="btn-ghost btn-sm btn-danger"
+                      onClick={() => {
+                        if (!confirm(`Delete "${m.label}" for good? Its minutes stop counting.`))
+                          return
+                        dispatch({ type: 'DELETE_MATCH', id: m.id })
+                      }}
+                    >
+                      Delete
+                    </button>
                   </div>
                 </div>
               ))}
