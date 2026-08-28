@@ -1,42 +1,73 @@
 import { useMemo, useState } from 'react'
 import type { MatchEvent } from '../domain/events'
-import { DEFAULT_SLOTS, MID_SLOT, type PlayerId, type Slot } from '../domain/types'
-import { useSeason, type StoredMatch } from '../state/store'
+import { MINUTE, fairShares, foldMatch } from '../domain/engine'
+import { DEFAULT_SLOTS, MID_SLOT, type PlayerId, type Slot, type SlotId } from '../domain/types'
+import { dayContextFor, useSeason, type SetupDraft, type StoredMatch } from '../state/store'
+import PitchMap from '../ui/PitchMap'
+
+const emptyDraft = (slots: Slot[]): SetupDraft => ({
+  absent: [],
+  gk: null,
+  assignments: Object.fromEntries(slots.map((s) => [s.id, null])),
+  slots,
+})
 
 /**
- * Pre-match. Who is here, who is in goal, and who starts. Kept on one screen because it
- * all happens in the two minutes before kick-off with a phone in one hand.
+ * Pre-match. Who is here, who is in goal, and who starts.
+ *
+ * Every change is written straight to the stored match, so the line-up can be built at
+ * home on Thursday night and still be there at the ground on Friday.
  */
-export default function Setup({ match }: { match: StoredMatch }) {
+export default function Setup({ match, onLeave }: { match: StoredMatch; onLeave: () => void }) {
   const { season, dispatch } = useSeason()
-  const [absent, setAbsent] = useState<Set<PlayerId>>(new Set())
-  const [gk, setGk] = useState<PlayerId | null>(null)
-  const [assignments, setAssignments] = useState<Record<string, PlayerId | null>>({})
-  const [sixASide, setSixASide] = useState(false)
+  const draft = match.draft ?? emptyDraft(DEFAULT_SLOTS)
+  const [picking, setPicking] = useState<SlotId | null>(null)
 
-  const slots: Slot[] = useMemo(
-    () => (sixASide ? [...DEFAULT_SLOTS, MID_SLOT] : DEFAULT_SLOTS),
-    [sixASide],
-  )
+  const update = (patch: Partial<SetupDraft>) =>
+    dispatch({ type: 'SET_DRAFT', id: match.id, draft: { ...draft, ...patch } })
+
+  const slots = draft.slots
   const outfieldSlots = slots.filter((s) => !s.isGK)
+  const gkSlot = slots.find((s) => s.isGK)
+  const absent = new Set(draft.absent)
 
   const present = season.players.filter((p) => !absent.has(p.id))
-  const outfieldPool = present.filter((p) => p.id !== gk)
-  const taken = new Set(Object.values(assignments).filter(Boolean) as PlayerId[])
+  const taken = new Set(Object.values(draft.assignments).filter(Boolean) as PlayerId[])
 
-  const shareMinutes =
-    outfieldPool.length > 0
-      ? (match.config.totalMinutes * outfieldSlots.length) / outfieldPool.length
-      : 0
+  // Who is owed time, taking the day's other game into account if it has been played.
+  const day = useMemo(() => dayContextFor(season, match), [season, match])
+  const shares = useMemo(() => {
+    const state = foldMatch(season.players, { slots, availability: {} }, [])
+    return new Map(
+      fairShares(season.players, state, match.config, 0, day).map((s) => [s.playerId, s]),
+    )
+  }, [season.players, slots, match.config, day])
 
-  const ready = gk !== null && outfieldSlots.every((s) => assignments[s.id])
+  const owedFirst = [...present].sort(
+    (a, b) => (shares.get(a.id)?.deltaMs ?? 0) - (shares.get(b.id)?.deltaMs ?? 0),
+  )
+
+  const ready = draft.gk !== null && outfieldSlots.every((s) => draft.assignments[s.id])
+
+  const assign = (slotId: SlotId, playerId: PlayerId | null) => {
+    const next = { ...draft.assignments }
+    // A player can only be in one place, so clear her from anywhere else first.
+    for (const key of Object.keys(next)) if (next[key] === playerId) next[key] = null
+    next[slotId] = playerId
+    update({ assignments: next })
+    setPicking(null)
+  }
+
+  const setSixASide = (on: boolean) => {
+    const nextSlots = on ? [...DEFAULT_SLOTS, MID_SLOT] : DEFAULT_SLOTS
+    const next: Record<SlotId, PlayerId | null> = {}
+    for (const slot of nextSlots) next[slot.id] = draft.assignments[slot.id] ?? null
+    update({ slots: nextSlots, assignments: next })
+  }
 
   const start = () => {
-    if (!gk) return
-    const full: Record<string, PlayerId | null> = { ...assignments }
-    const keeper = slots.find((s) => s.isGK)
-    if (keeper) full[keeper.id] = gk
-
+    if (!draft.gk || !gkSlot) return
+    const assignments = { ...draft.assignments, [gkSlot.id]: draft.gk }
     const availability = Object.fromEntries(
       season.players.map((p) => [p.id, absent.has(p.id) ? 'absent' : 'available'] as const),
     )
@@ -45,13 +76,7 @@ export default function Setup({ match }: { match: StoredMatch }) {
       type: 'START_MATCH',
       match: { ...match, init: { slots, availability }, events: [] },
     })
-    const event: MatchEvent = {
-      t: 'LINEUP',
-      at: Date.now(),
-      clock: 0,
-      slots,
-      assignments: full,
-    }
+    const event: MatchEvent = { t: 'LINEUP', at: Date.now(), clock: 0, slots, assignments }
     dispatch({ type: 'APPEND', id: match.id, event })
   }
 
@@ -64,12 +89,94 @@ export default function Setup({ match }: { match: StoredMatch }) {
     )
   }
 
+  const nameOf = (id: PlayerId | null) => season.players.find((p) => p.id === id)?.name ?? '—'
+  const pickingSlot = picking ? slots.find((s) => s.id === picking) : null
+  const candidates = pickingSlot?.isGK ? present : present.filter((p) => p.id !== draft.gk)
+
+  const pickPlayer = (playerId: PlayerId) => {
+    if (!pickingSlot) return
+    if (pickingSlot.isGK) {
+      update({
+        gk: draft.gk === playerId ? null : playerId,
+        assignments: Object.fromEntries(
+          Object.entries(draft.assignments).map(([k, v]) => [k, v === playerId ? null : v]),
+        ),
+      })
+      setPicking(null)
+      return
+    }
+    assign(pickingSlot.id, playerId)
+  }
+
   return (
     <div className="screen">
-      <h2 style={{ fontSize: 22, marginBottom: 2 }}>{match.label}</h2>
-      <p className="muted small" style={{ margin: '0 0 8px' }}>
+      <h2 style={{ fontSize: 20, marginBottom: 2 }}>{match.label}</h2>
+      {match.venue && (
+        <p className="small" style={{ margin: '0 0 4px', color: 'var(--amber)' }}>
+          {match.venue}
+        </p>
+      )}
+      <p className="muted small" style={{ margin: '0 0 14px' }}>
         {match.config.totalMinutes} min · sub every {match.config.shiftMinutes} min
       </p>
+
+      <PitchMap
+        slots={slots}
+        nameOf={nameOf}
+        selectedSlotId={picking}
+        fill={(slotId) => ({
+          playerId: slots.find((s) => s.id === slotId)?.isGK
+            ? draft.gk
+            : (draft.assignments[slotId] ?? null),
+        })}
+        onSlotTap={(slotId) => setPicking(picking === slotId ? null : slotId)}
+      />
+
+      {pickingSlot ? (
+        <>
+          <div className="section-title">
+            WHO PLAYS {pickingSlot.label.toUpperCase()}? — MOST OWED FIRST
+          </div>
+          <div className="bench-strip">
+            {owedFirst
+              .filter((p) => candidates.includes(p))
+              .map((player) => {
+                const placed = taken.has(player.id) || draft.gk === player.id
+                const share = shares.get(player.id)
+                const owed = share ? Math.round(-share.deltaMs / MINUTE) : 0
+                return (
+                  <button
+                    key={player.id}
+                    className="bench-chip"
+                    style={{ opacity: placed ? 0.5 : 1 }}
+                    onClick={() => pickPlayer(player.id)}
+                  >
+                    <span className="who">{player.name}</span>
+                    <span className="slot-label">
+                      {placed ? 'already on' : owed > 0 ? `owed ${owed} min` : 'even'}
+                    </span>
+                  </button>
+                )
+              })}
+          </div>
+          <button
+            className="btn-ghost btn-block btn-sm"
+            style={{ marginTop: 8 }}
+            onClick={() => {
+              if (pickingSlot.isGK) update({ gk: null })
+              else assign(pickingSlot.id, null)
+              setPicking(null)
+            }}
+          >
+            Leave {pickingSlot.label} empty
+          </button>
+        </>
+      ) : (
+        <p className="muted small" style={{ margin: '12px 0 0', lineHeight: 1.5 }}>
+          Tap a position to choose who plays there. The keeper is the green one at the
+          bottom. Everything here is saved as you go.
+        </p>
+      )}
 
       <div className="section-title">WHO IS HERE</div>
       <div className="card">
@@ -86,19 +193,20 @@ export default function Setup({ match }: { match: StoredMatch }) {
                   opacity: here ? 1 : 0.55,
                 }}
                 onClick={() => {
-                  const next = new Set(absent)
-                  if (here) {
-                    next.add(player.id)
-                    if (gk === player.id) setGk(null)
-                    setAssignments((a) =>
-                      Object.fromEntries(
-                        Object.entries(a).map(([k, v]) => [k, v === player.id ? null : v]),
-                      ),
-                    )
-                  } else {
-                    next.delete(player.id)
-                  }
-                  setAbsent(next)
+                  update({
+                    absent: here
+                      ? [...draft.absent, player.id]
+                      : draft.absent.filter((id) => id !== player.id),
+                    assignments: here
+                      ? Object.fromEntries(
+                          Object.entries(draft.assignments).map(([k, v]) => [
+                            k,
+                            v === player.id ? null : v,
+                          ]),
+                        )
+                      : draft.assignments,
+                    gk: here && draft.gk === player.id ? null : draft.gk,
+                  })
                 }}
               >
                 {player.name}
@@ -115,8 +223,8 @@ export default function Setup({ match }: { match: StoredMatch }) {
       <div className="card">
         <div className="row">
           <span className="grow small">Six a side (adds a Mid)</span>
-          <button className="btn-sm" onClick={() => setSixASide((v) => !v)}>
-            {sixASide ? 'On' : 'Off'}
+          <button className="btn-sm" onClick={() => setSixASide(slots.length === 5)}>
+            {slots.length > 5 ? 'On' : 'Off'}
           </button>
         </div>
         <div className="row small muted" style={{ lineHeight: 1.5 }}>
@@ -124,91 +232,18 @@ export default function Setup({ match }: { match: StoredMatch }) {
         </div>
       </div>
 
-      <div className="section-title">KEEPER — ON ALL GAME</div>
-      <div className="card">
-        <div className="row wrap" style={{ gap: 6 }}>
-          {present.map((player) => (
-            <button
-              key={player.id}
-              className="btn-sm"
-              style={{
-                borderColor: gk === player.id ? 'var(--green)' : undefined,
-                background: gk === player.id ? 'var(--green-dim)' : undefined,
-              }}
-              onClick={() => {
-                setGk(gk === player.id ? null : player.id)
-                setAssignments((a) =>
-                  Object.fromEntries(
-                    Object.entries(a).map(([k, v]) => [k, v === player.id ? null : v]),
-                  ),
-                )
-              }}
-            >
-              {player.name}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="section-title">STARTING LINE-UP</div>
-      <div className="stack">
-        {outfieldSlots.map((slot) => (
-          <div className="card" key={slot.id}>
-            <div className="row">
-              <span className="slot-label grow">{slot.label}</span>
-              <strong>{nameOf(season.players, assignments[slot.id])}</strong>
-            </div>
-            <div className="row wrap" style={{ gap: 6 }}>
-              {outfieldPool.map((player) => {
-                const chosen = assignments[slot.id] === player.id
-                const used = taken.has(player.id) && !chosen
-                return (
-                  <button
-                    key={player.id}
-                    className="btn-sm"
-                    disabled={used}
-                    style={{ borderColor: chosen ? 'var(--green)' : undefined }}
-                    onClick={() =>
-                      setAssignments((a) => ({ ...a, [slot.id]: chosen ? null : player.id }))
-                    }
-                  >
-                    {player.name}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {outfieldPool.length > 0 && (
-        <p className="muted small" style={{ marginTop: 14, lineHeight: 1.5 }}>
-          Fair share this game is about <strong>{shareMinutes.toFixed(1)} minutes</strong> each
-          across {outfieldPool.length} outfield players.
-        </p>
-      )}
-
       <button
         className="btn-primary btn-block"
-        style={{ marginTop: 14, minHeight: 64, fontSize: 18 }}
+        style={{ marginTop: 16, minHeight: 64, fontSize: 18 }}
         disabled={!ready}
         onClick={start}
       >
-        {ready ? 'Confirm line-up' : 'Pick a keeper and a full line-up'}
+        {ready ? 'Confirm line-up and go' : 'Fill every position to start'}
       </button>
 
-      <button
-        className="btn-ghost btn-block btn-danger"
-        style={{ marginTop: 10 }}
-        onClick={() => dispatch({ type: 'DELETE_MATCH', id: match.id })}
-      >
-        Cancel this match
+      <button className="btn-ghost btn-block" style={{ marginTop: 10 }} onClick={onLeave}>
+        Leave for now — this is saved
       </button>
     </div>
   )
-}
-
-function nameOf(players: { id: string; name: string }[], id: PlayerId | null | undefined) {
-  if (!id) return '—'
-  return players.find((p) => p.id === id)?.name ?? '—'
 }

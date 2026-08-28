@@ -4,7 +4,7 @@ import Game from './screens/Game'
 import Squad from './screens/Squad'
 import Check from './screens/Check'
 import { DEFAULT_CONFIG, type Fixture } from './domain/types'
-import { activeMatch, newMatch, useSeason } from './state/store'
+import { activeMatch, matchForFixture, newMatch, useSeason } from './state/store'
 
 type Tab = 'game' | 'fixtures' | 'squad' | 'check'
 
@@ -22,11 +22,17 @@ export default function App() {
   const running = activeMatch(season)
 
   const setUpFixture = (fixture: Fixture) => {
-    // Setting up a new match discards whatever is on the game screen, so never do that
-    // silently to a game already in progress.
+    // A match already set up for this fixture is picked up where it was left, rather
+    // than silently replaced — that saved line-up may have been built at home.
+    const existing = matchForFixture(season, fixture.id)
+    if (existing) {
+      dispatch({ type: 'SET_ACTIVE', id: existing.id })
+      setTab('game')
+      return
+    }
     if (running && running.events.length > 0) {
       const ok = confirm(
-        `A match is already running (${running.label}). Start a new one and lose it?`,
+        `A match is already running (${running.label}). Leave it and set up this one? The running match is kept.`,
       )
       if (!ok) return
     }

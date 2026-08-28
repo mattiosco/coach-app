@@ -29,7 +29,7 @@ const init: MatchInit = {
   availability: {},
 }
 
-const config = { totalMinutes: 20, periods: 1, shiftMinutes: 5 }
+const config = { totalMinutes: 20, periods: 1, shiftMinutes: 5, gkWeight: 0.5 }
 
 /** Kick off with the first five, keeper first. */
 function lineup(clock = 0): MatchEvent {
@@ -104,20 +104,39 @@ describe('stint accounting', () => {
 })
 
 describe('fair shares', () => {
-  it('splits outfield minutes evenly and excludes the keeper', () => {
+  it('shares the day credit evenly when everyone is available', () => {
     const state = foldMatch(roster, init, [lineup(), { t: 'CLOCK_START', at: 0, clock: 0 }])
     const shares = fairShares(roster, state, config, 0)
     const byId = new Map(shares.map((s) => [s.playerId, s]))
 
-    // 20 minutes x 4 outfield slots = 80 player-minutes, over 9 outfield players.
-    expect(mins(byId.get('bea')!.targetMs)).toBeCloseTo(8.89, 1)
-    // The keeper is out of the rotation entirely.
-    expect(byId.get('ava')!.targetMs).toBe(0)
+    // 20 min x (4 outfield + half a keeper) = 90 credit-minutes over 10 players.
+    expect(mins(byId.get('bea')!.targetMs)).toBeCloseTo(9, 1)
+    expect(mins(byId.get('ava')!.targetMs)).toBeCloseTo(9, 1)
+    expect(mins(shares.reduce((sum, s) => sum + s.targetMs, 0))).toBeCloseTo(90, 1)
+  })
 
-    const outfieldTotal = shares
-      .filter((s) => s.playerId !== 'ava')
-      .reduce((sum, s) => sum + s.targetMs, 0)
-    expect(mins(outfieldTotal)).toBeCloseTo(80, 1)
+  it('counts a game in goal as half a game of running', () => {
+    const events: MatchEvent[] = [
+      lineup(),
+      { t: 'CLOCK_START', at: 0, clock: 0 },
+      { t: 'MATCH_END', at: 0, clock: 20 * MINUTE },
+    ]
+    const state = foldMatch(roster, init, events)
+    const byId = new Map(fairShares(roster, state, config, 20 * MINUTE).map((s) => [s.playerId, s]))
+
+    const keeper = byId.get('ava')!
+    const outfielder = byId.get('bea')!
+
+    // Both were on for the full 20, but the keeper banks half the credit.
+    expect(mins(keeper.playedMs)).toBe(20)
+    expect(mins(keeper.gkMs)).toBe(20)
+    expect(mins(keeper.creditMs)).toBe(10)
+    expect(mins(outfielder.playedMs)).toBe(20)
+    expect(mins(outfielder.creditMs)).toBe(20)
+
+    // So she is only just ahead of her share, while the outfielder is well ahead.
+    expect(mins(keeper.deltaMs)).toBeCloseTo(1, 1)
+    expect(mins(outfielder.deltaMs)).toBeCloseTo(11, 1)
   })
 
   it('shows who is owed time as a negative delta', () => {
@@ -184,9 +203,54 @@ describe('fair shares', () => {
     ])
     const after = fairShares(roster, state, config, 0).find((s) => s.playerId === 'bea')!
 
-    // Five outfield slots over nine players instead of four.
+    // Five outfield slots instead of four: 20 x 5.5 = 110 credit over 10 players.
     expect(after.targetMs).toBeGreaterThan(before.targetMs)
-    expect(mins(after.targetMs)).toBeCloseTo(11.11, 1)
+    expect(mins(after.targetMs)).toBeCloseTo(11, 1)
+  })
+})
+
+describe('match day', () => {
+  it('carries credit from the first game into the second', () => {
+    const state = foldMatch(roster, init, [lineup(), { t: 'CLOCK_START', at: 0, clock: 0 }])
+
+    // Ava kept goal in game one; Jo never got on.
+    const day = {
+      priorCreditMs: { ava: 10 * MINUTE, bea: 20 * MINUTE, jo: 0 },
+      dayCreditMs: 180 * MINUTE, // two games of 90
+      starts: { ava: 1, bea: 1 },
+      priorGkMs: { ava: 20 * MINUTE },
+    }
+    const byId = new Map(
+      fairShares(roster, state, config, 0, day).map((s) => [s.playerId, s]),
+    )
+
+    // Everyone is chasing 18 credit-minutes across the day, not 9 in this game.
+    expect(mins(byId.get('jo')!.targetMs)).toBeCloseTo(18, 1)
+    // Jo is owed the most, then the keeper, and Bea least of all.
+    expect(byId.get('jo')!.deltaMs).toBeLessThan(byId.get('ava')!.deltaMs)
+    expect(byId.get('ava')!.deltaMs).toBeLessThan(byId.get('bea')!.deltaMs)
+  })
+
+  it('puts the first game keeper ahead of a full-game outfielder in the queue', () => {
+    const state = foldMatch(roster, init, [
+      {
+        t: 'LINEUP',
+        at: 1000,
+        clock: 0,
+        slots: DEFAULT_SLOTS,
+        assignments: { gk: 'jo', def: 'ivy', left: 'hana', centre: 'gia', right: 'fay' },
+      },
+      { t: 'CLOCK_START', at: 0, clock: 0 },
+    ])
+    const day = {
+      // Ava kept last game (10 credit), Bea ran the whole game (20 credit).
+      priorCreditMs: { ava: 10 * MINUTE, bea: 20 * MINUTE },
+      dayCreditMs: 180 * MINUTE,
+      starts: { ava: 1, bea: 1 },
+      priorGkMs: { ava: 20 * MINUTE },
+    }
+    const byId = new Map(fairShares(roster, state, config, 0, day).map((s) => [s.playerId, s]))
+    expect(byId.get('ava')!.deltaMs).toBeLessThan(byId.get('bea')!.deltaMs)
   })
 })
 

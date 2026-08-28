@@ -30,6 +30,13 @@ export interface MatchConfig {
   periods: number
   /** How often to prompt for a rolling sub. */
   shiftMinutes: number
+  /**
+   * How much a minute in goal counts toward a player's share of running around.
+   * The keeper is on all game but does far less work, so half a minute of credit per
+   * minute kept means she has "had a game" without being pushed to the back of the
+   * queue for outfield time in the day's other match.
+   */
+  gkWeight: number
 }
 
 export interface Fixture {
@@ -63,4 +70,23 @@ export const DEFAULT_CONFIG: MatchConfig = {
   totalMinutes: 20,
   periods: 1,
   shiftMinutes: 5,
+  gkWeight: 0.5,
+}
+
+/**
+ * Where each position sits on the pitch map, as a percentage of the box. The girls read
+ * this from the sideline, so the shape has to match what they see facing the park.
+ */
+export const SLOT_POSITIONS: Record<string, { x: number; y: number }> = {
+  gk: { x: 50, y: 87 },
+  def: { x: 50, y: 66 },
+  mid: { x: 50, y: 45 },
+  left: { x: 19, y: 24 },
+  centre: { x: 50, y: 20 },
+  right: { x: 81, y: 24 },
+}
+
+/** Fallback for slots added mid-game, spread along the front. */
+export function slotPosition(slotId: string, index: number): { x: number; y: number } {
+  return SLOT_POSITIONS[slotId] ?? { x: 12 + ((index * 27) % 76), y: 40 }
 }

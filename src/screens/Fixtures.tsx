@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useSeason } from '../state/store'
+import { hasStarted, matchForFixture, useSeason } from '../state/store'
 import { fetchFixtures, isUpcoming, mergeFixtures } from '../lib/squadi'
 import { DEFAULT_CONFIG, type Fixture } from '../domain/types'
 
@@ -37,6 +37,14 @@ export default function Fixtures({ onPick }: { onPick: (fixture: Fixture) => voi
     } finally {
       setSyncing(false)
     }
+  }
+
+  /** Fixtures already set up say so, so a saved line-up is never a surprise. */
+  const labelFor = (fixtureId: string) => {
+    const existing = matchForFixture(season, fixtureId)
+    if (!existing) return 'Set up match'
+    if (existing.endedAt) return 'Played — view'
+    return hasStarted(existing) ? 'Resume game' : 'Continue setting up'
   }
 
   const upcoming = season.fixtures.filter((f) => isUpcoming(f))
@@ -115,7 +123,7 @@ export default function Fixtures({ onPick }: { onPick: (fixture: Fixture) => voi
               </div>
               <div className="row">
                 <button className="btn-primary grow" onClick={() => onPick(fixture)}>
-                  Set up match
+                  {labelFor(fixture.id)}
                 </button>
                 <button className="btn-ghost btn-sm" onClick={() => setEditing(fixture.id)}>
                   Edit

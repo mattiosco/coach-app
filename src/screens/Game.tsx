@@ -3,7 +3,6 @@ import {
   MINUTE,
   currentClock,
   fairShares,
-  goalkeeperId,
   totalMatchMs,
   type MatchState,
   type Share,
@@ -12,7 +11,17 @@ import type { MatchEvent, NewMatchEvent } from '../domain/events'
 import { msToNextShift, shiftNumber, suggestSubs } from '../domain/suggest'
 import { DEFAULT_CONFIG, MID_SLOT, type Availability, type PlayerId } from '../domain/types'
 import { acquireWakeLock } from '../lib/platform'
-import { activeMatch, newMatch, stateOf, useSeason, type StoredMatch } from '../state/store'
+import {
+  activeMatch,
+  dayContextFor,
+  hasStarted,
+  newMatch,
+  stateOf,
+  useSeason,
+  type PlannedSub,
+  type StoredMatch,
+} from '../state/store'
+import PitchMap from '../ui/PitchMap'
 import Setup from './Setup'
 
 export default function Game({ onNoMatch }: { onNoMatch: () => void }) {
@@ -20,12 +29,12 @@ export default function Game({ onNoMatch }: { onNoMatch: () => void }) {
   const match = activeMatch(season)
 
   if (!match) {
+    const parked = season.matches.filter((m) => !m.endedAt)
     return (
       <div className="screen">
         <h2 style={{ fontSize: 24 }}>No match running</h2>
         <p className="muted small" style={{ lineHeight: 1.5 }}>
-          Pick a real fixture, or start a practice match to have a play. A practice match
-          works exactly like a real one — it is just not tied to a fixture.
+          Pick a fixture, or start a practice match to have a play.
         </p>
         <div className="stack">
           <button className="btn-primary btn-block" onClick={onNoMatch}>
@@ -44,6 +53,44 @@ export default function Game({ onNoMatch }: { onNoMatch: () => void }) {
             Start a practice match
           </button>
         </div>
+
+        {parked.length > 0 && (
+          <>
+            <div className="section-title">SET UP EARLIER — PICK UP WHERE YOU LEFT OFF</div>
+            <div className="stack">
+              {parked.map((m) => (
+                <div className="card" key={m.id}>
+                  <div className="row">
+                    <div className="grow">
+                      <div style={{ fontWeight: 700 }}>{m.label}</div>
+                      <div className="small muted">
+                        {hasStarted(m) ? 'In progress' : 'Line-up saved, not started'}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="row">
+                    <button
+                      className="btn-primary grow"
+                      onClick={() => dispatch({ type: 'SET_ACTIVE', id: m.id })}
+                    >
+                      {hasStarted(m) ? 'Resume game' : 'Continue setting up'}
+                    </button>
+                    <button
+                      className="btn-ghost btn-sm btn-danger"
+                      onClick={() => {
+                        if (!confirm(`Throw away "${m.label}"?`)) return
+                        dispatch({ type: 'DELETE_MATCH', id: m.id })
+                      }}
+                    >
+                      Discard
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
         {season.players.length < 2 && (
           <p className="muted small" style={{ marginTop: 12 }}>
             Add some players on the Squad tab first.
@@ -54,26 +101,34 @@ export default function Game({ onNoMatch }: { onNoMatch: () => void }) {
   }
 
   const state = stateOf(season, match)
-  const started = match.events.some((e) => e.t === 'LINEUP')
+  const leave = () => dispatch({ type: 'SET_ACTIVE', id: null })
 
-  return started ? <Live match={match} state={state} /> : <Setup match={match} />
+  return hasStarted(match) ? (
+    <Live match={match} state={state} onLeave={leave} />
+  ) : (
+    <Setup match={match} onLeave={leave} />
+  )
 }
 
-type Selection =
-  | { kind: 'bench'; playerId: PlayerId }
-  | { kind: 'slot'; slotId: string }
-  | null
-
-function Live({ match, state }: { match: StoredMatch; state: MatchState }) {
+function Live({
+  match,
+  state,
+  onLeave,
+}: {
+  match: StoredMatch
+  state: MatchState
+  onLeave: () => void
+}) {
   const { season, dispatch } = useSeason()
   const [, tick] = useState(0)
-  const [selected, setSelected] = useState<Selection>(null)
+  const [selectedSlot, setSelectedSlot] = useState<string | null>(null)
   const [ackedShift, setAckedShift] = useState(0)
 
   const running = state.runningSince !== null
+  const planned = match.plannedSubs
 
-  // One timer drives the whole screen. The clock value itself is always derived from
-  // Date.now(), so a missed tick costs nothing.
+  // One timer drives the screen. The clock is always derived from Date.now(), so a
+  // missed tick costs nothing.
   useEffect(() => {
     if (!running) return
     const id = setInterval(() => tick((n) => n + 1), 250)
@@ -95,18 +150,16 @@ function Live({ match, state }: { match: StoredMatch; state: MatchState }) {
     }
   }, [running])
 
-  const now = Date.now()
-  const clock = currentClock(state, now)
+  const clock = currentClock(state, Date.now())
   const totalMs = totalMatchMs(match.config)
+  const day = useMemo(() => dayContextFor(season, match), [season, match])
   const shares = useMemo(
-    () => fairShares(season.players, state, match.config, clock),
-    // Recompute each tick: cheap, and always in step with the clock.
+    () => fairShares(season.players, state, match.config, clock, day),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [season.players, state, match.config, Math.floor(clock / 1000)],
+    [season.players, state, match.config, day, Math.floor(clock / 1000)],
   )
   const shareOf = new Map(shares.map((s) => [s.playerId, s]))
-  const nameOf = (id: PlayerId | null) =>
-    season.players.find((p) => p.id === id)?.name ?? '—'
+  const nameOf = (id: PlayerId | null) => season.players.find((p) => p.id === id)?.name ?? '—'
 
   const append = (event: NewMatchEvent) =>
     dispatch({
@@ -117,15 +170,14 @@ function Live({ match, state }: { match: StoredMatch; state: MatchState }) {
 
   const shift = shiftNumber(clock, match.config.shiftMinutes)
   const shiftDue = running && shift > ackedShift && clock > 0
-  const gk = goalkeeperId(state)
 
   const suggestions = useMemo(
-    () => (shiftDue ? suggestSubs(season.players, state, shares, clock) : []),
+    () => (shiftDue && planned.length === 0 ? suggestSubs(season.players, state, shares, clock) : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [shiftDue, state, shares],
+    [shiftDue, state, shares, planned.length],
   )
 
-  // Buzz once when a shift falls due, so it works with the phone in a pocket.
+  // Buzz once when a shift falls due, so it lands with the phone in a pocket.
   const buzzed = useRef(0)
   useEffect(() => {
     if (shiftDue && buzzed.current !== shift) {
@@ -134,58 +186,77 @@ function Live({ match, state }: { match: StoredMatch; state: MatchState }) {
     }
   }, [shiftDue, shift])
 
+  const plannedBySlot = new Map(planned.map((p) => [p.slotId, p]))
+  const plannedOn = new Set(planned.map((p) => p.on))
+
   const bench = season.players.filter(
     (p) => !Object.values(state.onField).includes(p.id) && state.availability[p.id] === 'available',
   )
 
+  const setPlanned = (next: PlannedSub[]) =>
+    dispatch({ type: 'PLAN_SUBS', id: match.id, planned: next })
+
+  /** Tapping a position selects it; tapping it again clears any plan on it. */
   const handleSlot = (slotId: string) => {
-    const occupant = state.onField[slotId] ?? null
-    if (!selected) {
-      // Selecting an empty slot is useful too: it is how you fill a gap left by a loan.
-      setSelected({ kind: 'slot', slotId })
+    if (plannedBySlot.has(slotId) && selectedSlot === slotId) {
+      setPlanned(planned.filter((p) => p.slotId !== slotId))
+      setSelectedSlot(null)
       return
     }
-    if (selected.kind === 'bench') {
-      append({ t: 'SUB', slotId, off: occupant, on: selected.playerId })
-      setSelected(null)
-      return
-    }
-    if (selected.slotId === slotId) {
-      setSelected(null)
-      return
-    }
-    append({ t: 'SWAP', slotA: selected.slotId, slotB: slotId })
-    setSelected(null)
+    setSelectedSlot(selectedSlot === slotId ? null : slotId)
   }
 
+  /** Tapping a bench player plans her into the selected position. */
   const handleBench = (playerId: PlayerId) => {
-    if (selected?.kind === 'slot') {
-      append({ t: 'SUB', slotId: selected.slotId, off: state.onField[selected.slotId] ?? null, on: playerId })
-      setSelected(null)
-      return
+    if (!selectedSlot) return
+    const next = planned.filter((p) => p.slotId !== selectedSlot && p.on !== playerId)
+    setPlanned([
+      ...next,
+      { slotId: selectedSlot, off: state.onField[selectedSlot] ?? null, on: playerId },
+    ])
+    setSelectedSlot(null)
+  }
+
+  const makeSubs = () => {
+    const at = Date.now()
+    const stamp = currentClock(state, at)
+    for (const sub of planned) {
+      dispatch({
+        type: 'APPEND',
+        id: match.id,
+        event: { t: 'SUB', slotId: sub.slotId, off: sub.off, on: sub.on, at, clock: stamp },
+      })
     }
-    setSelected(
-      selected?.kind === 'bench' && selected.playerId === playerId
-        ? null
-        : { kind: 'bench', playerId },
-    )
+    setPlanned([])
+    setAckedShift(shift)
+    setSelectedSlot(null)
+    navigator.vibrate?.(60)
   }
 
   const outfieldCount = state.slots.filter((s) => !s.isGK).length
 
   return (
     <div className="screen">
-      <div className="inline" style={{ justifyContent: 'space-between' }}>
-        <div className="small muted">{match.label}</div>
-        <div className="small muted">
+      <div className="inline" style={{ justifyContent: 'space-between', gap: 8 }}>
+        <div className="grow" style={{ minWidth: 0 }}>
+          <div className="small muted" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {match.label}
+          </div>
+          {match.venue && (
+            <div className="small" style={{ color: 'var(--amber)', fontWeight: 700 }}>
+              {match.venue}
+            </div>
+          )}
+        </div>
+        <div className="small muted" style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
           Period {state.period} · shift {shift}
         </div>
       </div>
 
-      <div className={`clock ${running ? 'running' : 'paused'}`} style={{ margin: '10px 0 2px' }}>
+      <div className={`clock ${running ? 'running' : 'paused'}`} style={{ margin: '8px 0 2px' }}>
         {formatClock(clock)}
       </div>
-      <div className="small muted" style={{ textAlign: 'center', marginBottom: 12 }}>
+      <div className="small muted" style={{ textAlign: 'center', marginBottom: 10 }}>
         {clock >= totalMs
           ? 'Full time reached'
           : `${formatClock(totalMs - clock)} left · next sub in ${formatClock(
@@ -196,7 +267,7 @@ function Live({ match, state }: { match: StoredMatch; state: MatchState }) {
       <div className="inline" style={{ marginBottom: 12 }}>
         <button
           className={running ? '' : 'btn-primary'}
-          style={{ flex: 2, minHeight: 64, fontSize: 18, fontWeight: 700 }}
+          style={{ flex: 2, minHeight: 60, fontSize: 18, fontWeight: 700 }}
           onClick={() => append({ t: running ? 'CLOCK_PAUSE' : 'CLOCK_START' })}
         >
           {running ? 'Pause' : clock === 0 ? 'Start' : 'Resume'}
@@ -211,9 +282,9 @@ function Live({ match, state }: { match: StoredMatch; state: MatchState }) {
         </button>
       </div>
 
-      {shiftDue && (
+      {shiftDue && planned.length === 0 && (
         <div className="stack" style={{ marginBottom: 12 }}>
-          <div className="shift-banner">SUB NOW — shift {shift}</div>
+          <div className="shift-banner">SUB DUE — shift {shift}</div>
           {suggestions.length > 0 && (
             <div className="card">
               {suggestions.map((s) => (
@@ -227,26 +298,13 @@ function Live({ match, state }: { match: StoredMatch; state: MatchState }) {
               <div className="row">
                 <button
                   className="btn-primary grow"
-                  onClick={() => {
-                    for (const s of suggestions) {
-                      dispatch({
-                        type: 'APPEND',
-                        id: match.id,
-                        event: {
-                          t: 'SUB',
-                          slotId: s.slotId,
-                          off: s.off,
-                          on: s.on,
-                          at: Date.now(),
-                          clock: currentClock(state, Date.now()),
-                        },
-                      })
-                    }
-                    setAckedShift(shift)
-                    setSelected(null)
-                  }}
+                  onClick={() =>
+                    setPlanned(
+                      suggestions.map((s) => ({ slotId: s.slotId, off: s.off, on: s.on })),
+                    )
+                  }
                 >
-                  Apply {suggestions.length} {suggestions.length === 1 ? 'change' : 'changes'}
+                  Plan these {suggestions.length}
                 </button>
                 <button className="btn-ghost btn-sm" onClick={() => setAckedShift(shift)}>
                   Skip
@@ -262,37 +320,54 @@ function Live({ match, state }: { match: StoredMatch; state: MatchState }) {
         </div>
       )}
 
-      <div className="section-title">ON THE PARK</div>
-      <div className="stack">
-        {state.slots.map((slot) => {
-          const occupant = state.onField[slot.id] ?? null
-          const share = occupant ? shareOf.get(occupant) : undefined
-          return (
-            <button
-              key={slot.id}
-              className={[
-                'slot',
-                slot.isGK ? 'gk' : '',
-                occupant ? '' : 'empty',
-                selected?.kind === 'slot' && selected.slotId === slot.id ? 'selected' : '',
-              ].join(' ')}
-              onClick={() => handleSlot(slot.id)}
-            >
-              <div className="grow">
-                <div className="slot-label">
-                  {slot.label}
-                  {slot.isGK && ' · all game'}
-                </div>
-                <div className="slot-name">{occupant ? nameOf(occupant) : 'Empty'}</div>
-              </div>
-              {share && <DeltaPill share={share} isGK={slot.isGK} />}
-            </button>
-          )
+      <PitchMap
+        slots={state.slots}
+        nameOf={nameOf}
+        selectedSlotId={selectedSlot}
+        fill={(slotId) => ({
+          playerId: state.onField[slotId] ?? null,
+          incoming: plannedBySlot.get(slotId)?.on ?? null,
         })}
-      </div>
+        onSlotTap={handleSlot}
+      />
 
-      <div className="section-title">BENCH — MOST RESTED FIRST</div>
-      <div className="stack">
+      {planned.length > 0 && (
+        <div className="stack" style={{ marginTop: 12 }}>
+          <div className="card">
+            <div className="row small muted">
+              Tell the girls, then make the change when play stops.
+            </div>
+            {planned.map((p) => (
+              <div className="row small" key={p.slotId}>
+                <span className="grow">
+                  <strong style={{ color: 'var(--amber)' }}>{nameOf(p.on)}</strong> on for{' '}
+                  {nameOf(p.off)}
+                </span>
+                <span className="muted">{state.slots.find((x) => x.id === p.slotId)?.label}</span>
+              </div>
+            ))}
+          </div>
+          <div className="inline">
+            <button
+              className="btn-primary grow"
+              style={{ minHeight: 60, fontSize: 17, fontWeight: 700 }}
+              onClick={makeSubs}
+            >
+              Make {planned.length === 1 ? 'this sub' : `these ${planned.length} subs`} now
+            </button>
+            <button className="btn-ghost" onClick={() => setPlanned([])}>
+              Clear
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="section-title">
+        {selectedSlot
+          ? `WHO GOES TO ${(state.slots.find((s) => s.id === selectedSlot)?.label ?? '').toUpperCase()}?`
+          : 'BENCH — MOST OWED FIRST'}
+      </div>
+      <div className="bench-strip">
         {[...bench]
           .sort((a, b) => (shareOf.get(a.id)?.deltaMs ?? 0) - (shareOf.get(b.id)?.deltaMs ?? 0))
           .map((player) => {
@@ -300,30 +375,28 @@ function Live({ match, state }: { match: StoredMatch; state: MatchState }) {
             return (
               <button
                 key={player.id}
-                className={[
-                  'slot',
-                  selected?.kind === 'bench' && selected.playerId === player.id ? 'selected' : '',
-                ].join(' ')}
+                className={`bench-chip ${plannedOn.has(player.id) ? 'planned' : ''}`}
+                disabled={!selectedSlot && !plannedOn.has(player.id)}
+                style={{ opacity: selectedSlot || plannedOn.has(player.id) ? 1 : 0.85 }}
                 onClick={() => handleBench(player.id)}
               >
-                <div className="grow">
-                  <div className="slot-name">{player.name}</div>
-                  <div className="slot-label">
-                    {share ? `${Math.round(share.playedMs / MINUTE)} min played` : ''}
-                  </div>
-                </div>
-                {share && <DeltaPill share={share} isGK={player.id === gk} />}
+                <span className="who">{player.name}</span>
+                <span className="slot-label">
+                  {plannedOn.has(player.id)
+                    ? 'GOING ON'
+                    : `${Math.round((share?.playedMs ?? 0) / MINUTE)} min`}
+                </span>
+                {share && <DeltaPill share={share} />}
               </button>
             )
           })}
         {bench.length === 0 && <p className="muted small">Nobody on the bench.</p>}
       </div>
 
-      {selected && (
-        <p className="small" style={{ color: 'var(--amber)', marginTop: 12 }}>
-          {selected.kind === 'bench'
-            ? `${nameOf(selected.playerId)} selected — tap a position to bring her on.`
-            : 'Position selected — tap a bench player to sub, or another position to swap.'}
+      {!selectedSlot && planned.length === 0 && (
+        <p className="muted small" style={{ marginTop: 10, lineHeight: 1.5 }}>
+          Tap a position on the pitch, then tap who is going there. That plans the change
+          so you can tell the girls — nothing moves until you tap Make subs.
         </p>
       )}
 
@@ -359,13 +432,7 @@ function Live({ match, state }: { match: StoredMatch; state: MatchState }) {
         </div>
         <div className="row">
           <span className="grow small">Half time — swap ends</span>
-          <button
-            className="btn-sm"
-            onClick={() => {
-              append({ t: 'PERIOD_END' })
-              setSelected(null)
-            }}
-          >
+          <button className="btn-sm" onClick={() => append({ t: 'PERIOD_END' })}>
             End period {state.period}
           </button>
         </div>
@@ -397,36 +464,37 @@ function Live({ match, state }: { match: StoredMatch; state: MatchState }) {
             )
           })}
         </div>
-        <div className="row">
-          <button
-            className="btn-ghost btn-danger btn-block"
-            onClick={() => {
-              if (!confirm('End the match and save it?')) return
-              append({ t: 'MATCH_END' })
-              dispatch({ type: 'END_MATCH', id: match.id, at: Date.now() })
-            }}
-          >
-            End match
-          </button>
-        </div>
-        <div className="row">
-          <button
-            className="btn-ghost btn-danger btn-block"
-            onClick={() => {
-              if (!confirm('Throw this match away? Nothing about it is kept.')) return
-              dispatch({ type: 'DELETE_MATCH', id: match.id })
-            }}
-          >
-            Discard — keep no record
-          </button>
-        </div>
+      </div>
+
+      <div className="stack" style={{ marginTop: 12 }}>
+        <button className="btn-ghost" onClick={onLeave}>
+          Leave the game screen — this is saved
+        </button>
+        <button
+          className="btn-ghost btn-danger"
+          onClick={() => {
+            if (!confirm('End the match and save it?')) return
+            append({ t: 'MATCH_END' })
+            dispatch({ type: 'END_MATCH', id: match.id, at: Date.now() })
+          }}
+        >
+          End match
+        </button>
+        <button
+          className="btn-ghost btn-danger"
+          onClick={() => {
+            if (!confirm('Throw this match away? Nothing about it is kept.')) return
+            dispatch({ type: 'DELETE_MATCH', id: match.id })
+          }}
+        >
+          Discard — keep no record
+        </button>
       </div>
     </div>
   )
 }
 
-function DeltaPill({ share, isGK }: { share: Share; isGK: boolean }) {
-  if (isGK) return <span className="pill level">GK</span>
+function DeltaPill({ share }: { share: Share }) {
   const deltaMin = share.deltaMs / MINUTE
   const rounded = Math.round(deltaMin * 10) / 10
   const cls = Math.abs(rounded) < 0.5 ? 'level' : rounded < 0 ? 'behind' : 'ahead'

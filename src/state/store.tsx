@@ -8,7 +8,17 @@ import {
   type ReactNode,
 } from 'react'
 import type { MatchEvent } from '../domain/events'
-import { foldMatch, undoLast, type MatchInit, type MatchState } from '../domain/engine'
+import {
+  creditMs,
+  currentClock,
+  foldMatch,
+  gameCreditSupplyMs,
+  goalMsFor,
+  undoLast,
+  type DayContext,
+  type MatchInit,
+  type MatchState,
+} from '../domain/engine'
 import {
   DEFAULT_CONFIG,
   DEFAULT_SLOTS,
@@ -18,6 +28,8 @@ import {
   type MatchId,
   type Player,
   type PlayerId,
+  type Slot,
+  type SlotId,
 } from '../domain/types'
 import { store } from '../lib/storage'
 
@@ -27,15 +39,47 @@ export interface Votes {
   third?: PlayerId
 }
 
+/**
+ * The line-up being built before kick-off. Persisted rather than held in component state
+ * so it survives switching tabs, closing the app, and setting the team up at home hours
+ * before the game.
+ */
+export interface SetupDraft {
+  absent: PlayerId[]
+  gk: PlayerId | null
+  assignments: Record<SlotId, PlayerId | null>
+  slots: Slot[]
+}
+
+/** A sub agreed with the girls now, made a few minutes later. */
+export interface PlannedSub {
+  slotId: SlotId
+  off: PlayerId | null
+  on: PlayerId
+}
+
 export interface StoredMatch {
   id: MatchId
   fixtureId: string | null
   label: string
+  /** Which pitch, shown on the game screen — it matters when you arrive. */
+  venue: string
+  /** Local calendar date, grouping the two games of one match day. */
+  dayKey: string
   config: MatchConfig
   init: MatchInit
   events: MatchEvent[]
+  draft: SetupDraft | null
+  plannedSubs: PlannedSub[]
   votes: Votes
   endedAt: number | null
+}
+
+/** Local YYYY-MM-DD, so the two Friday games group together. */
+export function dayKeyOf(iso: string | number | Date): string {
+  const d = new Date(iso)
+  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60_000)
+  return local.toISOString().slice(0, 10)
 }
 
 export interface Season {
@@ -71,6 +115,8 @@ export type Action =
   | { type: 'UNDO'; id: MatchId; now: number }
   | { type: 'SET_CONFIG'; id: MatchId; config: MatchConfig }
   | { type: 'SET_VOTES'; id: MatchId; votes: Votes }
+  | { type: 'SET_DRAFT'; id: MatchId; draft: SetupDraft }
+  | { type: 'PLAN_SUBS'; id: MatchId; planned: PlannedSub[] }
   | { type: 'END_MATCH'; id: MatchId; at: number }
   | { type: 'DELETE_MATCH'; id: MatchId }
 
@@ -148,6 +194,12 @@ export function reducer(season: Season, action: Action): Season {
     case 'SET_VOTES':
       return patchMatch(season, action.id, (m) => ({ ...m, votes: action.votes }))
 
+    case 'SET_DRAFT':
+      return patchMatch(season, action.id, (m) => ({ ...m, draft: action.draft }))
+
+    case 'PLAN_SUBS':
+      return patchMatch(season, action.id, (m) => ({ ...m, plannedSubs: action.planned }))
+
     case 'END_MATCH':
       return {
         ...patchMatch(season, action.id, (m) => ({ ...m, endedAt: action.at })),
@@ -221,11 +273,69 @@ export function newMatch(
     id: crypto.randomUUID(),
     fixtureId: fixture?.id ?? null,
     label,
+    venue: fixture?.venue ?? '',
+    dayKey: dayKeyOf(fixture?.startTime ?? Date.now()),
     config,
     init: { slots: DEFAULT_SLOTS, availability },
     events: [],
+    draft: null,
+    plannedSubs: [],
     votes: {},
     endedAt: null,
+  }
+}
+
+/** The match already set up for this fixture, if there is one. */
+export function matchForFixture(season: Season, fixtureId: string): StoredMatch | null {
+  return season.matches.find((m) => m.fixtureId === fixtureId) ?? null
+}
+
+export function hasStarted(match: StoredMatch): boolean {
+  return match.events.some((e) => e.t === 'LINEUP')
+}
+
+/**
+ * Build the fairness context for a match day from the day's other games.
+ *
+ * Two games on one Friday are one outing as far as the girls are concerned, so credit
+ * earned in the first game counts against the share owed in the second.
+ */
+export function dayContextFor(season: Season, match: StoredMatch): DayContext {
+  const siblings = season.matches.filter((m) => m.dayKey === match.dayKey && m.id !== match.id)
+
+  const priorCreditMs: Record<PlayerId, number> = {}
+  const priorGkMs: Record<PlayerId, number> = {}
+  const starts: Record<PlayerId, number> = {}
+
+  for (const sibling of siblings) {
+    const state = foldMatch(season.players, sibling.init, sibling.events)
+    const clock = currentClock(state, Date.now())
+    for (const player of season.players) {
+      priorCreditMs[player.id] =
+        (priorCreditMs[player.id] ?? 0) +
+        creditMs(state, player.id, clock, sibling.config.gkWeight)
+      priorGkMs[player.id] = (priorGkMs[player.id] ?? 0) + goalMsFor(state, player.id, clock)
+    }
+    for (const id of state.starters) starts[id] = (starts[id] ?? 0) + 1
+  }
+
+  // Fixtures still to come today count toward the day's supply, so the target does not
+  // lurch upward the moment the second game is set up. A practice match is its own day:
+  // it should not inherit a target sized for the two real games.
+  const plannedToday = match.fixtureId
+    ? season.fixtures.filter(
+        (f) =>
+          dayKeyOf(f.startTime) === match.dayKey && !siblings.some((m) => m.fixtureId === f.id),
+      ).length
+    : 1
+  const gamesInDay = siblings.length + Math.max(1, plannedToday)
+
+  const perGame = gameCreditSupplyMs(match.config, match.init.slots)
+  return {
+    priorCreditMs,
+    priorGkMs,
+    starts,
+    dayCreditMs: perGame * gamesInDay,
   }
 }
 
