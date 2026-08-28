@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   MINUTE,
+  creditMs,
   currentClock,
   fairShares,
   foldMatch,
@@ -155,23 +156,40 @@ describe('fair shares', () => {
     expect(byId.get('jo')!.deltaMs).toBeLessThan(0)
   })
 
-  it('prorates the target of a player lent to the other team', () => {
+  it('counts time lent to the other team as a full run', () => {
     const events: MatchEvent[] = [
       lineup(),
       { t: 'CLOCK_START', at: 0, clock: 0 },
       { t: 'AVAILABILITY', at: 0, clock: 10 * MINUTE, playerId: 'jo', status: 'loaned' },
+      { t: 'MATCH_END', at: 0, clock: 20 * MINUTE },
     ]
     const state = foldMatch(roster, init, events)
-    const shares = fairShares(roster, state, config, 10 * MINUTE)
-    const byId = new Map(shares.map((s) => [s.playerId, s]))
-
-    // Jo was available for half the match, so she is owed about half a normal share
-    // rather than looking robbed of a full one.
+    const byId = new Map(fairShares(roster, state, config, 20 * MINUTE).map((s) => [s.playerId, s]))
     const jo = byId.get('jo')!
     const staying = byId.get('gia')!
-    expect(jo.targetMs).toBeGreaterThan(0)
-    expect(jo.targetMs).toBeLessThan(staying.targetMs)
-    expect(jo.targetMs / staying.targetMs).toBeCloseTo(0.5, 1)
+
+    // She played ten minutes for the other team, and that is ten minutes of running.
+    expect(mins(jo.playedMs)).toBe(10)
+    expect(mins(jo.creditMs)).toBe(10)
+    // She keeps a full share rather than a prorated one: she was there all game.
+    expect(jo.targetMs).toBeCloseTo(staying.targetMs, 5)
+    // And she is ahead of a girl who sat on our bench the whole time.
+    expect(jo.deltaMs).toBeGreaterThan(staying.deltaMs)
+  })
+
+  it('does not send a lent player to the front of the queue next game', () => {
+    const lent: MatchEvent[] = [
+      lineup(),
+      { t: 'CLOCK_START', at: 0, clock: 0 },
+      { t: 'AVAILABILITY', at: 0, clock: 0, playerId: 'jo', status: 'loaned' },
+      { t: 'MATCH_END', at: 0, clock: 20 * MINUTE },
+    ]
+    const state = foldMatch(roster, init, lent)
+    const clock = 20 * MINUTE
+    // A full game lent out is a full game of credit carried into the next match.
+    expect(mins(creditMs(state, 'jo', clock, config.gkWeight))).toBe(20)
+    // Whereas an unused sub carries nothing.
+    expect(mins(creditMs(state, 'hana', clock, config.gkWeight))).toBe(0)
   })
 
   it('pulls a loaned player off the park automatically', () => {
@@ -182,8 +200,21 @@ describe('fair shares', () => {
     ]
     const state = foldMatch(roster, init, events)
     expect(state.onField.left).toBeNull()
-    // Her clock stops the moment she leaves.
+    // Six minutes for us, then nine for them: still fifteen minutes of football.
+    expect(mins(minutesPlayedMs(state, 'cleo', 15 * MINUTE))).toBe(15)
+  })
+
+  it('stops the clock for a player who has gone home', () => {
+    const events: MatchEvent[] = [
+      lineup(),
+      { t: 'CLOCK_START', at: 0, clock: 0 },
+      { t: 'AVAILABILITY', at: 0, clock: 6 * MINUTE, playerId: 'cleo', status: 'absent' },
+    ]
+    const state = foldMatch(roster, init, events)
+    const byId = new Map(fairShares(roster, state, config, 15 * MINUTE).map((s) => [s.playerId, s]))
+    // Absent is not lent: her time stops, and her share shrinks to what she was there for.
     expect(mins(minutesPlayedMs(state, 'cleo', 15 * MINUTE))).toBe(6)
+    expect(byId.get('cleo')!.targetMs).toBeLessThan(byId.get('gia')!.targetMs)
   })
 
   it('raises everyone else’s target when the team goes to six a side', () => {

@@ -123,6 +123,9 @@ function Live({
   const [, tick] = useState(0)
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null)
   const [ackedShift, setAckedShift] = useState(0)
+  /** Changes just made, kept on screen while everyone finds their new spot. */
+  const [recent, setRecent] = useState<PlannedSub[] | null>(null)
+  const recentTimer = useRef<number | undefined>(undefined)
 
   const running = state.runningSince !== null
   const planned = match.plannedSubs
@@ -227,11 +230,27 @@ function Live({
         event: { t: 'SUB', slotId: sub.slotId, off: sub.off, on: sub.on, at, clock: stamp },
       })
     }
+    // Hold the list up for a minute: the girls are still sorting themselves out, and
+    // this is what you check them against.
+    setRecent(planned)
+    window.clearTimeout(recentTimer.current)
+    recentTimer.current = window.setTimeout(() => setRecent(null), 60_000)
+
     setPlanned([])
     setAckedShift(shift)
     setSelectedSlot(null)
     navigator.vibrate?.(60)
   }
+
+  // The moment the next change starts being planned, the last one is history.
+  useEffect(() => {
+    if (planned.length > 0) {
+      setRecent(null)
+      window.clearTimeout(recentTimer.current)
+    }
+  }, [planned.length])
+
+  useEffect(() => () => window.clearTimeout(recentTimer.current), [])
 
   const outfieldCount = state.slots.filter((s) => !s.isGK).length
 
@@ -330,6 +349,26 @@ function Live({
         })}
         onSlotTap={handleSlot}
       />
+
+      {recent && recent.length > 0 && planned.length === 0 && (
+        <div className="card" style={{ marginTop: 12, borderColor: 'var(--green-dim)' }}>
+          <div className="row small muted">Just changed — check they are in the right spots</div>
+          {recent.map((p) => (
+            <div className="row small" key={p.slotId}>
+              <span className="grow">
+                <strong style={{ color: 'var(--green)' }}>{nameOf(p.on)}</strong> on for{' '}
+                {nameOf(p.off)}
+              </span>
+              <span className="muted">{state.slots.find((x) => x.id === p.slotId)?.label}</span>
+            </div>
+          ))}
+          <div className="row">
+            <button className="btn-ghost btn-sm btn-block" onClick={() => setRecent(null)}>
+              Done
+            </button>
+          </div>
+        </div>
+      )}
 
       {planned.length > 0 && (
         <div className="stack" style={{ marginTop: 12 }}>

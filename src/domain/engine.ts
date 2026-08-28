@@ -22,6 +22,10 @@ export interface MatchState {
   stintInGoal: Record<PlayerId, boolean>
   /** Players named in the starting line-up. */
   starters: PlayerId[]
+  /** Completed ms spent playing for the other team. Counts as a run, at full rate. */
+  loanedMs: Record<PlayerId, number>
+  /** Game-clock reading when the current loan began. */
+  loanSince: Record<PlayerId, number | undefined>
   availableMs: Record<PlayerId, number>
   availableSince: Record<PlayerId, number | undefined>
 }
@@ -55,6 +59,8 @@ export function foldMatch(roster: Player[], init: MatchInit, events: MatchEvent[
     stintStart: {},
     stintInGoal: {},
     starters: [],
+    loanedMs: {},
+    loanSince: {},
     availableMs: {},
     availableSince: {},
   }
@@ -64,6 +70,7 @@ export function foldMatch(roster: Player[], init: MatchInit, events: MatchEvent[
     state.availability[player.id] = status
     state.playedMs[player.id] = 0
     state.gkMs[player.id] = 0
+    state.loanedMs[player.id] = 0
     state.availableMs[player.id] = 0
     state.availableSince[player.id] = status === 'available' ? 0 : undefined
   }
@@ -158,22 +165,40 @@ export function foldMatch(roster: Player[], init: MatchInit, events: MatchEvent[
 
       case 'AVAILABILITY': {
         const previous = state.availability[event.playerId]
+
+        // Lent out or gone home: either way she is off our park.
         if (previous === 'available' && event.status !== 'available') {
-          const since = state.availableSince[event.playerId]
-          if (since !== undefined) {
-            state.availableMs[event.playerId] += Math.max(0, event.clock - since)
-            state.availableSince[event.playerId] = undefined
-          }
-          // Someone lent out or gone home cannot still be on the park.
           for (const [slotId, id] of Object.entries(state.onField)) {
             if (id === event.playerId) {
               endStint(id, event.clock)
               state.onField[slotId] = null
             }
           }
-        } else if (previous !== 'available' && event.status === 'available') {
+        }
+
+        // A lent player is still running about, just in the other team's shirt, so her
+        // availability clock keeps going and the time counts as a run. Only genuinely
+        // being absent stops it.
+        if (previous !== 'absent' && event.status === 'absent') {
+          const since = state.availableSince[event.playerId]
+          if (since !== undefined) {
+            state.availableMs[event.playerId] += Math.max(0, event.clock - since)
+            state.availableSince[event.playerId] = undefined
+          }
+        } else if (previous === 'absent' && event.status !== 'absent') {
           state.availableSince[event.playerId] = event.clock
         }
+
+        if (previous !== 'loaned' && event.status === 'loaned') {
+          state.loanSince[event.playerId] = event.clock
+        } else if (previous === 'loaned' && event.status !== 'loaned') {
+          const since = state.loanSince[event.playerId]
+          if (since !== undefined) {
+            state.loanedMs[event.playerId] += Math.max(0, event.clock - since)
+            state.loanSince[event.playerId] = undefined
+          }
+        }
+
         state.availability[event.playerId] = event.status
         break
       }
@@ -185,6 +210,11 @@ export function foldMatch(roster: Player[], init: MatchInit, events: MatchEvent[
           if (since !== undefined) {
             state.availableMs[player.id] += Math.max(0, event.clock - since)
             state.availableSince[player.id] = undefined
+          }
+          const loaned = state.loanSince[player.id]
+          if (loaned !== undefined) {
+            state.loanedMs[player.id] += Math.max(0, event.clock - loaned)
+            state.loanSince[player.id] = undefined
           }
         }
         state.accumulatedMs = event.clock
@@ -204,10 +234,22 @@ export function currentClock(state: MatchState, now: number): number {
     : state.accumulatedMs + Math.max(0, now - state.runningSince)
 }
 
+/**
+ * Minutes on the park, including any spent lent to the other team. She is out there
+ * running about either way, so it is a run — and it means she does not come back next
+ * game looking like she has been robbed.
+ */
 export function minutesPlayedMs(state: MatchState, id: PlayerId, clock: number): number {
   const start = state.stintStart[id]
   const open = start === undefined ? 0 : Math.max(0, clock - start)
-  return (state.playedMs[id] ?? 0) + open
+  return (state.playedMs[id] ?? 0) + open + loanMsFor(state, id, clock)
+}
+
+/** Time spent playing for the other team, closed and open spans together. */
+export function loanMsFor(state: MatchState, id: PlayerId, clock: number): number {
+  const since = state.loanSince[id]
+  const open = since === undefined ? 0 : Math.max(0, clock - since)
+  return (state.loanedMs[id] ?? 0) + open
 }
 
 export function isOnField(state: MatchState, id: PlayerId): boolean {
@@ -233,7 +275,7 @@ export function projectedAvailableMs(
   const since = state.availableSince[id]
   const banked =
     (state.availableMs[id] ?? 0) + (since === undefined ? 0 : Math.max(0, clock - since))
-  const remaining = state.availability[id] === 'available' ? Math.max(0, totalMs - clock) : 0
+  const remaining = state.availability[id] !== 'absent' ? Math.max(0, totalMs - clock) : 0
   return banked + remaining
 }
 
