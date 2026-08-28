@@ -204,6 +204,31 @@ describe('fair shares', () => {
     expect(mins(minutesPlayedMs(state, 'cleo', 15 * MINUTE))).toBe(15)
   })
 
+  it('gives a late arrival a share of only the time she is there for', () => {
+    const lateInit: MatchInit = {
+      slots: DEFAULT_SLOTS,
+      availability: { jo: 'absent' },
+    }
+    const events: MatchEvent[] = [
+      lineup(),
+      { t: 'CLOCK_START', at: 0, clock: 0 },
+      // Jo turns up at the ten minute mark.
+      { t: 'AVAILABILITY', at: 0, clock: 10 * MINUTE, playerId: 'jo', status: 'available' },
+    ]
+    const state = foldMatch(roster, lateInit, events)
+    const byId = new Map(
+      fairShares(roster, state, config, 10 * MINUTE).map((s) => [s.playerId, s]),
+    )
+    const jo = byId.get('jo')!
+    const allGame = byId.get('gia')!
+
+    // She is available for half the match, so she is owed about half a share rather than
+    // appearing to be the most robbed girl on the team.
+    expect(jo.targetMs).toBeGreaterThan(0)
+    expect(jo.targetMs / allGame.targetMs).toBeCloseTo(0.5, 1)
+    expect(jo.available).toBe(true)
+  })
+
   it('stops the clock for a player who has gone home', () => {
     const events: MatchEvent[] = [
       lineup(),

@@ -564,11 +564,41 @@ function Live({
             End period {state.period}
           </button>
         </div>
+        {season.players.some((p) => state.availability[p.id] === 'absent') && (
+          <>
+            <div className="row">
+              <span className="grow small">Turned up late? Tap her to add her in</span>
+            </div>
+            <div className="row wrap" style={{ gap: 6 }}>
+              {season.players
+                .filter((p) => state.availability[p.id] === 'absent')
+                .map((player) => (
+                  <button
+                    key={player.id}
+                    className="btn-sm"
+                    style={{ borderColor: 'var(--green)' }}
+                    onClick={() =>
+                      append({
+                        t: 'AVAILABILITY',
+                        playerId: player.id,
+                        status: 'available' as Availability,
+                      })
+                    }
+                  >
+                    {player.name} arrived
+                  </button>
+                ))}
+            </div>
+          </>
+        )}
+
         <div className="row">
           <span className="grow small">Lend a player to the other team</span>
         </div>
         <div className="row wrap" style={{ gap: 6 }}>
-          {season.players.map((player) => {
+          {season.players
+            .filter((p) => state.availability[p.id] !== 'absent')
+            .map((player) => {
             const status = state.availability[player.id]
             return (
               <button
