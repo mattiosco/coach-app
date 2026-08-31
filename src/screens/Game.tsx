@@ -50,7 +50,13 @@ export default function Game({ onNoMatch }: { onNoMatch: () => void }) {
             onClick={() =>
               dispatch({
                 type: 'START_MATCH',
-                match: newMatch(null, 'Practice match', {}, DEFAULT_CONFIG),
+                match: newMatch(
+                  null,
+                  'Practice match',
+                  {},
+                  { ...DEFAULT_CONFIG, totalMinutes: season.defaults.gameMinutes },
+                  formationFor(season.defaults.playersPerSide),
+                ),
               })
             }
           >
@@ -587,6 +593,40 @@ function Live({
                 setSelectedSlot(next.id)
                 document.querySelector('.pitch')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
               }}
+            >
+              +
+            </button>
+          </div>
+        </div>
+        <div className="row">
+          <span className="grow small">Game length</span>
+          <div className="inline">
+            <button
+              className="btn-sm"
+              disabled={match.config.totalMinutes <= 5}
+              onClick={() =>
+                dispatch({
+                  type: 'SET_CONFIG',
+                  id: match.id,
+                  config: { ...match.config, totalMinutes: match.config.totalMinutes - 5 },
+                })
+              }
+            >
+              −
+            </button>
+            <strong style={{ minWidth: 52, textAlign: 'center' }}>
+              {match.config.totalMinutes} min
+            </strong>
+            <button
+              className="btn-sm"
+              disabled={match.config.totalMinutes >= 60}
+              onClick={() =>
+                dispatch({
+                  type: 'SET_CONFIG',
+                  id: match.id,
+                  config: { ...match.config, totalMinutes: match.config.totalMinutes + 5 },
+                })
+              }
             >
               +
             </button>

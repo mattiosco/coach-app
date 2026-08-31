@@ -1,6 +1,6 @@
 import { currentClock, foldMatch, goalMsFor, loanMsFor, minutesPlayedMs, MINUTE } from '../domain/engine'
 import type { Fixture, Player, Role } from '../domain/types'
-import { emptyTeam, type AppState, type Season, type Votes } from '../state/store'
+import { emptyTeam, type AppState, type Season, type TeamDefaults, type Votes } from '../state/store'
 
 /**
  * Moving data between phones without a server: everything travels as a file the coach
@@ -19,6 +19,7 @@ interface TeamShare {
   squadiUrl: string
   players: { name: string; preferred?: Role[] }[]
   fixtures: Fixture[]
+  defaults?: TeamDefaults
 }
 
 interface Backup {
@@ -36,6 +37,7 @@ export function teamSharePayload(team: Season): string {
     squadiUrl: team.squadiUrl,
     players: team.players.map((p) => ({ name: p.name, preferred: p.preferred })),
     fixtures: team.fixtures,
+    defaults: team.defaults,
   }
   return JSON.stringify(payload, null, 2)
 }
@@ -112,6 +114,7 @@ export function parseImport(text: string): Imported {
     squadiUrl?: string
     players?: TeamShare['players']
     fixtures?: Fixture[]
+    defaults?: TeamDefaults
     app?: AppState
   }
 
@@ -125,6 +128,7 @@ export function parseImport(text: string): Imported {
       ),
       fixtures: payload.fixtures ?? [],
     }
+    if (payload.defaults) team.defaults = payload.defaults
     return { kind: 'team', team }
   }
 

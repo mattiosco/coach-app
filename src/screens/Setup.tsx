@@ -27,7 +27,7 @@ const emptyDraft = (slots: Slot[]): SetupDraft => ({
  */
 export default function Setup({ match, onLeave }: { match: StoredMatch; onLeave: () => void }) {
   const { season, dispatch } = useSeason()
-  const draft = match.draft ?? emptyDraft(DEFAULT_SLOTS)
+  const draft = match.draft ?? emptyDraft(match.init.slots.length ? match.init.slots : DEFAULT_SLOTS)
   const [picking, setPicking] = useState<SlotId | null>(null)
 
   const update = (patch: Partial<SetupDraft>) =>
@@ -350,9 +350,43 @@ export default function Setup({ match, onLeave }: { match: StoredMatch; onLeave:
             </button>
           </div>
         </div>
+        <div className="row">
+          <span className="grow small">Game length</span>
+          <div className="inline">
+            <button
+              className="btn-sm"
+              disabled={match.config.totalMinutes <= 5}
+              onClick={() =>
+                dispatch({
+                  type: 'SET_CONFIG',
+                  id: match.id,
+                  config: { ...match.config, totalMinutes: match.config.totalMinutes - 5 },
+                })
+              }
+            >
+              −
+            </button>
+            <strong style={{ minWidth: 52, textAlign: 'center' }}>
+              {match.config.totalMinutes} min
+            </strong>
+            <button
+              className="btn-sm"
+              disabled={match.config.totalMinutes >= 60}
+              onClick={() =>
+                dispatch({
+                  type: 'SET_CONFIG',
+                  id: match.id,
+                  config: { ...match.config, totalMinutes: match.config.totalMinutes + 5 },
+                })
+              }
+            >
+              +
+            </button>
+          </div>
+        </div>
         <div className="row small muted" style={{ lineHeight: 1.5 }}>
           Half time is a button during the game, not a setting — tap it if it happens.
-          The count can also be changed mid-game.
+          Both settings can also be changed mid-game.
         </div>
       </div>
 

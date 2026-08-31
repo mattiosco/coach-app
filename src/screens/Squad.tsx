@@ -1,12 +1,33 @@
 import { useState } from 'react'
-import { ROLES } from '../domain/types'
+import { FORMATION_NAMES, ROLES } from '../domain/types'
 import { useSeason } from '../state/store'
+import { parseSquadiUrl } from '../lib/squadi'
 
 export default function Squad() {
   const { app, season, dispatch } = useSeason()
   const [name, setName] = useState('')
   const [editing, setEditing] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<string | null>(null)
+  const [linkDraft, setLinkDraft] = useState<string | null>(null)
+  const [linkError, setLinkError] = useState<string | null>(null)
+
+  const setDefaults = (patch: Partial<typeof season.defaults>) =>
+    dispatch({ type: 'SET_TEAM_DEFAULTS', defaults: { ...season.defaults, ...patch } })
+
+  const saveLink = () => {
+    const url = (linkDraft ?? season.squadiUrl).trim()
+    if (url) {
+      try {
+        parseSquadiUrl(url)
+      } catch (e) {
+        setLinkError(String(e instanceof Error ? e.message : e))
+        return
+      }
+    }
+    dispatch({ type: 'SET_SQUADI_URL', url })
+    setLinkError(null)
+    setLinkDraft(null)
+  }
 
   const add = () => {
     const trimmed = name.trim()
@@ -69,7 +90,85 @@ export default function Squad() {
         )}
       </div>
 
-      <h2 style={{ fontSize: 20, marginBottom: 4 }}>{season.name} squad</h2>
+      <div className="section-title">{season.name.toUpperCase()} — SETTINGS</div>
+      <div className="card">
+        <div className="row">
+          <span className="grow small">
+            Default players per side · {FORMATION_NAMES[season.defaults.playersPerSide] ?? ''}
+          </span>
+          <div className="inline">
+            <button
+              className="btn-sm"
+              disabled={season.defaults.playersPerSide <= 4}
+              onClick={() => setDefaults({ playersPerSide: season.defaults.playersPerSide - 1 })}
+            >
+              −
+            </button>
+            <strong style={{ minWidth: 28, textAlign: 'center' }}>
+              {season.defaults.playersPerSide}
+            </strong>
+            <button
+              className="btn-sm"
+              disabled={season.defaults.playersPerSide >= 8}
+              onClick={() => setDefaults({ playersPerSide: season.defaults.playersPerSide + 1 })}
+            >
+              +
+            </button>
+          </div>
+        </div>
+        <div className="row">
+          <span className="grow small">Default game length</span>
+          <div className="inline">
+            <button
+              className="btn-sm"
+              disabled={season.defaults.gameMinutes <= 5}
+              onClick={() => setDefaults({ gameMinutes: season.defaults.gameMinutes - 5 })}
+            >
+              −
+            </button>
+            <strong style={{ minWidth: 52, textAlign: 'center' }}>
+              {season.defaults.gameMinutes} min
+            </strong>
+            <button
+              className="btn-sm"
+              disabled={season.defaults.gameMinutes >= 60}
+              onClick={() => setDefaults({ gameMinutes: season.defaults.gameMinutes + 5 })}
+            >
+              +
+            </button>
+          </div>
+        </div>
+        <div className="row stack" style={{ alignItems: 'stretch' }}>
+          <label className="small muted">
+            Squadi draw link — open the draw with your team selected and copy the address
+          </label>
+          <input
+            type="text"
+            value={linkDraft ?? season.squadiUrl}
+            placeholder="https://registration.squadi.com/competitions?…&teamId=…"
+            onChange={(e) => setLinkDraft(e.target.value)}
+          />
+          {linkDraft !== null && (
+            <div className="inline">
+              <button className="btn-primary btn-sm grow" onClick={saveLink}>
+                Save link
+              </button>
+              <button className="btn-ghost btn-sm" onClick={() => { setLinkDraft(null); setLinkError(null) }}>
+                Cancel
+              </button>
+            </div>
+          )}
+          {linkError && (
+            <span className="small" style={{ color: 'var(--amber)' }}>{linkError}</span>
+          )}
+        </div>
+        <div className="row small muted" style={{ lineHeight: 1.5 }}>
+          Defaults apply to each new game; both can still be changed per game at setup and
+          mid-game.
+        </div>
+      </div>
+
+      <h2 style={{ fontSize: 20, margin: '18px 0 4px' }}>{season.name} squad</h2>
       <p className="muted small" style={{ margin: '0 0 16px' }}>
         {season.players.length} {season.players.length === 1 ? 'player' : 'players'}. Names stay
         on this phone. Tap a player to set where she likes to play.

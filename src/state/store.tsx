@@ -83,10 +83,19 @@ export interface StoredMatch {
  * shape the screens have always consumed, so a coach running two teams switches context
  * with one tap and nothing bleeds between them.
  */
+/** Per-team defaults, applied to each new match and editable per game. */
+export interface TeamDefaults {
+  playersPerSide: number
+  gameMinutes: number
+}
+
+export const TEAM_DEFAULTS: TeamDefaults = { playersPerSide: 5, gameMinutes: 20 }
+
 export interface Season {
   id: string
   name: string
   squadiUrl: string
+  defaults: TeamDefaults
   players: Player[]
   fixtures: Fixture[]
   matches: StoredMatch[]
@@ -111,6 +120,7 @@ export function emptyTeam(name: string, squadiUrl = ''): Season {
     id: crypto.randomUUID(),
     name,
     squadiUrl,
+    defaults: { ...TEAM_DEFAULTS },
     players: [],
     fixtures: [],
     matches: [],
@@ -147,6 +157,7 @@ export type Action =
   | { type: 'END_MATCH'; id: MatchId; at: number }
   | { type: 'DELETE_MATCH'; id: MatchId }
   | { type: 'SET_SQUADI_URL'; url: string }
+  | { type: 'SET_TEAM_DEFAULTS'; defaults: TeamDefaults }
   // App-level: teams and restore.
   | { type: 'LOAD_APP'; app: AppState }
   | { type: 'TEAM_ADD'; name: string }
@@ -254,6 +265,9 @@ export function teamReducer(season: Season, action: Action): Season {
     case 'SET_SQUADI_URL':
       return { ...season, squadiUrl: action.url.trim() }
 
+    case 'SET_TEAM_DEFAULTS':
+      return { ...season, defaults: action.defaults }
+
     default:
       return season
   }
@@ -314,6 +328,7 @@ function migrate(app: AppState): AppState {
     ...app,
     teams: app.teams.map((team) => ({
       ...team,
+      defaults: team.defaults ?? { ...TEAM_DEFAULTS },
       matches: team.matches.map((m) =>
         m.fixtureId === null && !m.dayKey.startsWith('practice-')
           ? { ...m, dayKey: `practice-${m.id}` }
@@ -398,6 +413,7 @@ export function newMatch(
   label: string,
   availability: Record<PlayerId, Availability>,
   config: MatchConfig = DEFAULT_CONFIG,
+  slots: Slot[] = DEFAULT_SLOTS,
 ): StoredMatch {
   const id = crypto.randomUUID()
   return {
@@ -409,7 +425,7 @@ export function newMatch(
     // that happen to fall on the same date.
     dayKey: fixture ? dayKeyOf(fixture.startTime) : `practice-${id}`,
     config,
-    init: { slots: DEFAULT_SLOTS, availability },
+    init: { slots, availability },
     events: [],
     draft: null,
     plannedSubs: [],

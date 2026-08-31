@@ -5,6 +5,7 @@ import Squad from './screens/Squad'
 import Check from './screens/Check'
 import { DEFAULT_CONFIG, type Fixture } from './domain/types'
 import { activeMatch, matchForFixture, newMatch, useSeason } from './state/store'
+import { formationFor } from './domain/types'
 
 type Tab = 'game' | 'fixtures' | 'squad' | 'check'
 
@@ -43,7 +44,16 @@ export default function App() {
         fixture,
         label,
         {},
-        { ...DEFAULT_CONFIG, totalMinutes: fixture.config.totalMinutes },
+        // Squadi's published duration wins where it exists; the team default fills in
+        // for hand-added fixtures. Both are editable per game anyway.
+        {
+          ...DEFAULT_CONFIG,
+          totalMinutes:
+            fixture.source === 'squadi'
+              ? fixture.config.totalMinutes
+              : season.defaults.gameMinutes,
+        },
+        formationFor(season.defaults.playersPerSide),
       ),
     })
     setTab('game')

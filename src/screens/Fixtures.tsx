@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { hasStarted, matchForFixture, useSeason } from '../state/store'
-import { fetchFixtures, isUpcoming, mergeFixtures, parseSquadiUrl } from '../lib/squadi'
+import { fetchFixtures, isUpcoming, mergeFixtures } from '../lib/squadi'
 import { DEFAULT_CONFIG, type Fixture } from '../domain/types'
 
 const fmt = new Intl.DateTimeFormat(undefined, {
@@ -17,8 +17,6 @@ export default function Fixtures({ onPick }: { onPick: (fixture: Fixture) => voi
   const [error, setError] = useState<string | null>(null)
   const [showPast, setShowPast] = useState(false)
   const [editing, setEditing] = useState<string | null>(null)
-  const [linkOpen, setLinkOpen] = useState(false)
-  const [linkDraft, setLinkDraft] = useState<string | null>(null)
 
   const sync = async () => {
     setSyncing(true)
@@ -47,22 +45,6 @@ export default function Fixtures({ onPick }: { onPick: (fixture: Fixture) => voi
     if (!existing) return 'Set up match'
     if (existing.endedAt) return 'Played — view'
     return hasStarted(existing) ? 'Resume game' : 'Continue setting up'
-  }
-
-  const saveLink = () => {
-    const url = (linkDraft ?? '').trim()
-    if (url) {
-      try {
-        parseSquadiUrl(url)
-      } catch (e) {
-        setError(String(e instanceof Error ? e.message : e))
-        return
-      }
-    }
-    dispatch({ type: 'SET_SQUADI_URL', url })
-    setError(null)
-    setLinkOpen(false)
-    setLinkDraft(null)
   }
 
   const upcoming = season.fixtures.filter((f) => isUpcoming(f))
@@ -103,41 +85,10 @@ export default function Fixtures({ onPick }: { onPick: (fixture: Fixture) => voi
         >
           Add by hand
         </button>
-        <button className="btn-ghost btn-sm" onClick={() => setLinkOpen((v) => !v)}>
-          {season.squadiUrl ? 'Squadi link' : 'Set Squadi link'}
-        </button>
+        {!season.squadiUrl && (
+          <span className="small muted">Set the Squadi link on the Team tab to sync.</span>
+        )}
       </div>
-
-      {linkOpen && (
-        <div className="card" style={{ marginTop: 10 }}>
-          <div className="row stack" style={{ alignItems: 'stretch' }}>
-            <label className="small muted">
-              This team&apos;s Squadi draw link. On squadi.com open the draw, pick your team,
-              then copy the page address here.
-            </label>
-            <input
-              type="text"
-              value={linkDraft ?? season.squadiUrl}
-              placeholder="https://registration.squadi.com/competitions?…&teamId=…"
-              onChange={(e) => setLinkDraft(e.target.value)}
-            />
-            <div className="inline">
-              <button className="btn-primary grow" onClick={saveLink}>
-                Save link
-              </button>
-              <button
-                className="btn-ghost btn-sm"
-                onClick={() => {
-                  setLinkOpen(false)
-                  setLinkDraft(null)
-                }}
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {error && (
         <p className="small" style={{ color: 'var(--amber)', lineHeight: 1.5 }}>
