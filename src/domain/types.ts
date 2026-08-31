@@ -102,12 +102,12 @@ export const FORMATIONS: Record<number, Slot[]> = {
   ],
   7: [
     slot('gk', 'GK', 'GK', 50, 88),
-    slot('def_l', 'Def L', 'Defence', 30, 68),
-    slot('def_r', 'Def R', 'Defence', 70, 68),
-    slot('mid_l', 'Mid L', 'Midfield', 28, 44),
-    slot('mid_r', 'Mid R', 'Midfield', 72, 44),
-    slot('fwd_l', 'Fwd L', 'Attack', 30, 18),
-    slot('fwd_r', 'Fwd R', 'Attack', 70, 18),
+    slot('def_l', 'Def L', 'Defence', 30, 70),
+    slot('def_r', 'Def R', 'Defence', 70, 70),
+    slot('mid', 'Mid', 'Midfield', 50, 48),
+    slot('left', 'Left', 'Attack', 22, 28),
+    slot('right', 'Right', 'Attack', 78, 28),
+    slot('fwd', 'Striker', 'Attack', 50, 14),
   ],
   8: [
     slot('gk', 'GK', 'GK', 50, 88),
@@ -125,7 +125,7 @@ export const FORMATION_NAMES: Record<number, string> = {
   4: 'GK-1-2',
   5: 'GK-1-3',
   6: 'GK-1-1-2-1',
-  7: 'GK-2-2-2',
+  7: 'GK-2-1-2-1',
   8: 'GK-2-2-2-1',
 }
 
