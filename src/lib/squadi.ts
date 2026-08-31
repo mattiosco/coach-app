@@ -1,13 +1,42 @@
 import { DEFAULT_CONFIG, type Fixture } from '../domain/types'
 
-/** Our team in Squadi: FSW Jillaroos Social - Leeuwin Conference, team BLUE. */
-export const SQUADI = {
-  competitionId: 1598,
-  teamId: 118318,
-  teamName: 'BLUE',
+/**
+ * The Jillaroos BLUE draw — the link this app was born with, used as the default for the
+ * first team so nothing breaks for the original coach.
+ */
+export const DEFAULT_SQUADI_URL =
+  'https://registration.squadi.com/competitions?yearId=8&organisationKey=e7e36d43-4345-4cc2-bec2-77e8a44d34e4&competitionUniqueKey=d08ce360-d6ff-44b9-a4a2-542ff8b1d49b&divisionId=All&teamId=118318'
+
+export interface SquadiRef {
+  competitionKey: string
+  teamId: number
 }
 
-const ENDPOINT = 'https://api.squadi.com/livescores/round/matches'
+/**
+ * Pull the pieces we need out of a pasted Squadi draw link.
+ *
+ * The link is what a coach can actually get their hands on — open the draw on the
+ * Squadi site with your team selected and copy the address. It carries the competition's
+ * unique key and the team's numeric id, which is everything the API needs.
+ */
+export function parseSquadiUrl(url: string): SquadiRef {
+  let parsed: URL
+  try {
+    parsed = new URL(url.trim())
+  } catch {
+    throw new Error('That does not look like a web address')
+  }
+  const competitionKey = parsed.searchParams.get('competitionUniqueKey')
+  const teamId = Number(parsed.searchParams.get('teamId'))
+  if (!competitionKey || !teamId) {
+    throw new Error(
+      'The link needs competitionUniqueKey and teamId — copy it from the Squadi draw page with your team selected',
+    )
+  }
+  return { competitionKey, teamId }
+}
+
+const API = 'https://api.squadi.com/livescores'
 
 interface SquadiTeam {
   id: number
@@ -34,28 +63,40 @@ interface SquadiRound {
 }
 
 /**
- * Pull the season fixture from Squadi.
+ * Pull the season fixture from Squadi for the given draw link.
  *
  * Online-only by design: the app never depends on this to run. Fixtures are cached to
  * disk on a successful sync, and anything the coach has corrected by hand is preserved,
  * because the published draw is sometimes wrong and the correction is the better data.
  */
-export async function fetchFixtures(signal?: AbortSignal): Promise<Fixture[]> {
-  const url =
-    `${ENDPOINT}?competitionId=${SQUADI.competitionId}` +
-    `&divisionId=&teamIds=[${SQUADI.teamId}]&ignoreStatuses=[1]`
+export async function fetchFixtures(squadiUrl: string, signal?: AbortSignal): Promise<Fixture[]> {
+  const ref = parseSquadiUrl(squadiUrl)
 
-  const response = await fetch(url, { signal })
-  if (!response.ok) throw new Error(`Squadi returned ${response.status}`)
+  // The draw link carries the competition's unique key, but the matches endpoint wants
+  // the numeric id. The public division endpoint maps one to the other.
+  const divisionsResponse = await fetch(
+    `${API}/division?competitionKey=${encodeURIComponent(ref.competitionKey)}`,
+    { signal },
+  )
+  if (!divisionsResponse.ok) throw new Error(`Squadi returned ${divisionsResponse.status}`)
+  const divisions = (await divisionsResponse.json()) as { competitionId?: number }[]
+  const competitionId = divisions.find((d) => d.competitionId)?.competitionId
+  if (!competitionId) throw new Error('Squadi does not recognise that competition link')
 
-  const data = (await response.json()) as { rounds?: SquadiRound[] }
+  const matchesResponse = await fetch(
+    `${API}/round/matches?competitionId=${competitionId}&divisionId=&teamIds=[${ref.teamId}]&ignoreStatuses=[1]`,
+    { signal },
+  )
+  if (!matchesResponse.ok) throw new Error(`Squadi returned ${matchesResponse.status}`)
+
+  const data = (await matchesResponse.json()) as { rounds?: SquadiRound[] }
   return (data.rounds ?? []).flatMap((round) =>
-    (round.matches ?? []).map((match) => toFixture(round, match)),
+    (round.matches ?? []).map((match) => toFixture(round, match, ref.teamId)),
   )
 }
 
-function toFixture(round: SquadiRound, match: SquadiMatch): Fixture {
-  const home = match.team1Id === SQUADI.teamId
+function toFixture(round: SquadiRound, match: SquadiMatch, teamId: number): Fixture {
+  const home = match.team1Id === teamId
   const opponent = (home ? match.team2?.name : match.team1?.name) ?? 'Unknown'
   const venue = [match.venueCourt?.venue?.name, match.venueCourt?.name]
     .filter(Boolean)

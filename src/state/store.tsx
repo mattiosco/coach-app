@@ -29,9 +29,11 @@ import {
   type MatchId,
   type Player,
   type PlayerId,
+  type Role,
   type Slot,
   type SlotId,
 } from '../domain/types'
+import { DEFAULT_SQUADI_URL } from '../lib/squadi'
 import { store } from '../lib/storage'
 
 export interface Votes {
@@ -76,14 +78,15 @@ export interface StoredMatch {
   endedAt: number | null
 }
 
-/** Local YYYY-MM-DD, so the two Friday games group together. */
-export function dayKeyOf(iso: string | number | Date): string {
-  const d = new Date(iso)
-  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60_000)
-  return local.toISOString().slice(0, 10)
-}
-
+/**
+ * One team: its squad, its fixtures, its games. Everything below the team is exactly the
+ * shape the screens have always consumed, so a coach running two teams switches context
+ * with one tap and nothing bleeds between them.
+ */
 export interface Season {
+  id: string
+  name: string
+  squadiUrl: string
   players: Player[]
   fixtures: Fixture[]
   matches: StoredMatch[]
@@ -91,20 +94,43 @@ export interface Season {
   fixturesSyncedAt: number | null
 }
 
-const EMPTY: Season = {
-  players: [],
-  fixtures: [],
-  matches: [],
-  activeMatchId: null,
-  fixturesSyncedAt: null,
+export interface AppState {
+  teams: Season[]
+  activeTeamId: string
 }
 
-const STORAGE_KEY = 'season/v1'
+/** Local YYYY-MM-DD, so the two Friday games group together. */
+export function dayKeyOf(iso: string | number | Date): string {
+  const d = new Date(iso)
+  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60_000)
+  return local.toISOString().slice(0, 10)
+}
+
+export function emptyTeam(name: string, squadiUrl = ''): Season {
+  return {
+    id: crypto.randomUUID(),
+    name,
+    squadiUrl,
+    players: [],
+    fixtures: [],
+    matches: [],
+    activeMatchId: null,
+    fixturesSyncedAt: null,
+  }
+}
+
+const EMPTY_APP: AppState = (() => {
+  const team = emptyTeam('My team', DEFAULT_SQUADI_URL)
+  return { teams: [team], activeTeamId: team.id }
+})()
+
+const STORAGE_KEY = 'app/v2'
+const LEGACY_KEY = 'season/v1'
 
 export type Action =
-  | { type: 'LOAD'; season: Season }
   | { type: 'ADD_PLAYER'; name: string }
   | { type: 'RENAME_PLAYER'; id: PlayerId; name: string }
+  | { type: 'SET_PREFERRED'; id: PlayerId; preferred: Role[] }
   | { type: 'REMOVE_PLAYER'; id: PlayerId }
   | { type: 'SET_FIXTURES'; fixtures: Fixture[]; syncedAt: number | null }
   | { type: 'EDIT_FIXTURE'; id: string; patch: Partial<Fixture> }
@@ -120,16 +146,21 @@ export type Action =
   | { type: 'PLAN_SUBS'; id: MatchId; planned: PlannedSub[] }
   | { type: 'END_MATCH'; id: MatchId; at: number }
   | { type: 'DELETE_MATCH'; id: MatchId }
+  | { type: 'SET_SQUADI_URL'; url: string }
+  // App-level: teams and restore.
+  | { type: 'LOAD_APP'; app: AppState }
+  | { type: 'TEAM_ADD'; name: string }
+  | { type: 'TEAM_IMPORT'; team: Season }
+  | { type: 'TEAM_RENAME'; id: string; name: string }
+  | { type: 'TEAM_DELETE'; id: string }
+  | { type: 'TEAM_SELECT'; id: string }
 
 function patchMatch(season: Season, id: MatchId, fn: (m: StoredMatch) => StoredMatch): Season {
   return { ...season, matches: season.matches.map((m) => (m.id === id ? fn(m) : m)) }
 }
 
-export function reducer(season: Season, action: Action): Season {
+export function teamReducer(season: Season, action: Action): Season {
   switch (action.type) {
-    case 'LOAD':
-      return migrate(action.season)
-
     case 'ADD_PLAYER':
       return {
         ...season,
@@ -141,6 +172,14 @@ export function reducer(season: Season, action: Action): Season {
         ...season,
         players: season.players.map((p) =>
           p.id === action.id ? { ...p, name: action.name.trim() } : p,
+        ),
+      }
+
+    case 'SET_PREFERRED':
+      return {
+        ...season,
+        players: season.players.map((p) =>
+          p.id === action.id ? { ...p, preferred: action.preferred } : p,
         ),
       }
 
@@ -211,6 +250,55 @@ export function reducer(season: Season, action: Action): Season {
         matches: season.matches.filter((m) => m.id !== action.id),
         activeMatchId: season.activeMatchId === action.id ? null : season.activeMatchId,
       }
+
+    case 'SET_SQUADI_URL':
+      return { ...season, squadiUrl: action.url.trim() }
+
+    default:
+      return season
+  }
+}
+
+function patchActive(app: AppState, fn: (t: Season) => Season): AppState {
+  return {
+    ...app,
+    teams: app.teams.map((t) => (t.id === app.activeTeamId ? fn(t) : t)),
+  }
+}
+
+export function appReducer(app: AppState, action: Action): AppState {
+  switch (action.type) {
+    case 'LOAD_APP':
+      return migrate(action.app)
+
+    case 'TEAM_ADD': {
+      const team = emptyTeam(action.name.trim() || 'New team')
+      return { teams: [...app.teams, team], activeTeamId: team.id }
+    }
+
+    case 'TEAM_IMPORT':
+      return { teams: [...app.teams, action.team], activeTeamId: action.team.id }
+
+    case 'TEAM_RENAME':
+      return {
+        ...app,
+        teams: app.teams.map((t) => (t.id === action.id ? { ...t, name: action.name.trim() } : t)),
+      }
+
+    case 'TEAM_DELETE': {
+      const teams = app.teams.filter((t) => t.id !== action.id)
+      if (teams.length === 0) return app // the last team cannot be deleted, only erased
+      return {
+        teams,
+        activeTeamId: app.activeTeamId === action.id ? teams[0].id : app.activeTeamId,
+      }
+    }
+
+    case 'TEAM_SELECT':
+      return { ...app, activeTeamId: action.id }
+
+    default:
+      return patchActive(app, (t) => teamReducer(t, action))
   }
 }
 
@@ -221,18 +309,35 @@ export function reducer(season: Season, action: Action): Season {
  * to test the app pooled its minutes with the real fixtures that evening and skewed
  * everyone's fair share. Give any such match a day of its own.
  */
-function migrate(season: Season): Season {
+function migrate(app: AppState): AppState {
   return {
-    ...season,
-    matches: season.matches.map((m) =>
-      m.fixtureId === null && !m.dayKey.startsWith('practice-')
-        ? { ...m, dayKey: `practice-${m.id}` }
-        : m,
-    ),
+    ...app,
+    teams: app.teams.map((team) => ({
+      ...team,
+      matches: team.matches.map((m) =>
+        m.fixtureId === null && !m.dayKey.startsWith('practice-')
+          ? { ...m, dayKey: `practice-${m.id}` }
+          : m,
+      ),
+    })),
   }
 }
 
+/** A season stored before teams existed, wrapped into the new shape. */
+function fromLegacy(legacy: Partial<Season>): AppState {
+  const team: Season = {
+    ...emptyTeam('My team', DEFAULT_SQUADI_URL),
+    players: legacy.players ?? [],
+    fixtures: legacy.fixtures ?? [],
+    matches: legacy.matches ?? [],
+    activeMatchId: legacy.activeMatchId ?? null,
+    fixturesSyncedAt: legacy.fixturesSyncedAt ?? null,
+  }
+  return { teams: [team], activeTeamId: team.id }
+}
+
 interface Ctx {
+  app: AppState
   season: Season
   dispatch: (action: Action) => void
   loaded: boolean
@@ -241,30 +346,38 @@ interface Ctx {
 const SeasonContext = createContext<Ctx | null>(null)
 
 export function SeasonProvider({ children }: { children: ReactNode }) {
-  const [season, dispatch] = useReducer(reducer, EMPTY)
+  const [app, dispatch] = useReducer(appReducer, EMPTY_APP)
   const loaded = useRef(false)
   const [, force] = useReducer((n: number) => n + 1, 0)
 
   useEffect(() => {
     void (async () => {
-      const saved = await store.get<Season>(STORAGE_KEY)
-      if (saved) dispatch({ type: 'LOAD', season: { ...EMPTY, ...saved } })
+      const saved = await store.get<AppState>(STORAGE_KEY)
+      if (saved?.teams?.length) {
+        dispatch({ type: 'LOAD_APP', app: saved })
+      } else {
+        const legacy = await store.get<Partial<Season>>(LEGACY_KEY)
+        if (legacy) dispatch({ type: 'LOAD_APP', app: fromLegacy(legacy) })
+      }
       loaded.current = true
       force()
     })()
   }, [])
 
-  // Write through on every change. The whole season is a few kilobytes, so there is no
+  // Write through on every change. The whole store is a few kilobytes, so there is no
   // reason to be clever about it — and a half-written season is worse than a slow one.
   useEffect(() => {
     if (!loaded.current) return
-    void store.set(STORAGE_KEY, season)
-  }, [season])
+    void store.set(STORAGE_KEY, app)
+  }, [app])
+
+  const season =
+    app.teams.find((t) => t.id === app.activeTeamId) ?? app.teams[0] ?? EMPTY_APP.teams[0]
 
   const value = useMemo(
-    () => ({ season, dispatch, loaded: loaded.current }),
+    () => ({ app, season, dispatch, loaded: loaded.current }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [season, loaded.current],
+    [app, season, loaded.current],
   )
 
   return <SeasonContext.Provider value={value}>{children}</SeasonContext.Provider>

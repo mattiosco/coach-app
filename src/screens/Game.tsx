@@ -9,7 +9,7 @@ import {
 } from '../domain/engine'
 import type { MatchEvent, NewMatchEvent } from '../domain/events'
 import { msToNextShift, shiftNumber, suggestSubs } from '../domain/suggest'
-import { DEFAULT_CONFIG, MID_SLOT, type Availability, type PlayerId } from '../domain/types'
+import { DEFAULT_CONFIG, formationFor, type Availability, type PlayerId } from '../domain/types'
 import { acquireWakeLock } from '../lib/platform'
 import {
   activeMatch,
@@ -168,6 +168,7 @@ function Live({
   /** Changes just made, kept on screen while everyone finds their new spot. */
   const [recent, setRecent] = useState<PlannedSub[] | null>(null)
   const recentTimer = useRef<number | undefined>(undefined)
+  const [suggestMsg, setSuggestMsg] = useState<string | null>(null)
 
   const running = state.runningSince !== null
   const planned = match.plannedSubs
@@ -262,6 +263,20 @@ function Live({
     setSelectedSlot(null)
   }
 
+  const suggestNow = () => {
+    const proposals = suggestSubs(season.players, state, shares, clock)
+    if (proposals.length === 0) {
+      setSuggestMsg(
+        'Nothing to suggest right now — everyone is close to her share, or the last subs are still settling in.',
+      )
+      return
+    }
+    setSuggestMsg(null)
+    setPlanned(proposals.map((p) => ({ slotId: p.slotId, off: p.off, on: p.on })))
+    setSelectedSlot(null)
+    setAckedShift(shift)
+  }
+
   const makeSubs = () => {
     const at = Date.now()
     const stamp = currentClock(state, at)
@@ -288,6 +303,7 @@ function Live({
   useEffect(() => {
     if (planned.length > 0) {
       setRecent(null)
+      setSuggestMsg(null)
       window.clearTimeout(recentTimer.current)
     }
   }, [planned.length])
@@ -399,6 +415,17 @@ function Live({
         })}
         onSlotTap={handleSlot}
       />
+
+      {planned.length === 0 && (
+        <button className="btn-block" style={{ marginTop: 12 }} onClick={suggestNow}>
+          Suggest subs
+        </button>
+      )}
+      {suggestMsg && (
+        <p className="muted small" style={{ margin: '8px 0 0', lineHeight: 1.5 }}>
+          {suggestMsg}
+        </p>
+      )}
 
       {recent && recent.length > 0 && planned.length === 0 && (
         <div className="card" style={{ marginTop: 12, borderColor: 'var(--green-dim)' }}>
@@ -543,10 +570,17 @@ function Live({
             <button
               className="btn-sm"
               onClick={() => {
-                const used = new Set(state.slots.map((s) => s.id))
-                const next = !used.has(MID_SLOT.id)
-                  ? MID_SLOT
-                  : { id: `slot-${state.slots.length}`, label: 'Extra', isGK: false }
+                const usedIds = new Set(state.slots.map((s) => s.id))
+                const usedLabels = new Set(state.slots.map((s) => s.label))
+                let next = null
+                for (let n = state.slots.length + 1; n <= 8 && !next; n++) {
+                  next =
+                    formationFor(n).find(
+                      (slot) =>
+                        !slot.isGK && !usedIds.has(slot.id) && !usedLabels.has(slot.label),
+                    ) ?? null
+                }
+                next ??= { id: `slot-${crypto.randomUUID()}`, label: 'Extra', isGK: false }
                 append({ t: 'SLOT_ADD', slot: next, playerId: null })
                 // Open the picker straight away: adding a position is only ever the first
                 // half of putting someone in it.

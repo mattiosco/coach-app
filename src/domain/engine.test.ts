@@ -10,6 +10,7 @@ import {
   type MatchInit,
 } from './engine'
 import type { MatchEvent } from './events'
+import { suggestSubs } from './suggest'
 import { DEFAULT_SLOTS, type Player } from './types'
 
 const roster: Player[] = [
@@ -331,6 +332,75 @@ describe('match day', () => {
     }
     const byId = new Map(fairShares(roster, state, config, 0, day).map((s) => [s.playerId, s]))
     expect(byId.get('ava')!.deltaMs).toBeLessThan(byId.get('bea')!.deltaMs)
+  })
+})
+
+describe('goalkeeper subs', () => {
+  it('splits the buckets when the keeper swaps with an outfielder at half time', () => {
+    const events: MatchEvent[] = [
+      lineup(),
+      { t: 'CLOCK_START', at: 0, clock: 0 },
+      // Half time: Ava comes out of goal, Bea goes in, both stay on the park.
+      { t: 'SWAP', at: 0, clock: 10 * MINUTE, slotA: 'gk', slotB: 'def' },
+      { t: 'MATCH_END', at: 0, clock: 20 * MINUTE },
+    ]
+    const state = foldMatch(roster, init, events)
+    const byId = new Map(
+      fairShares(roster, state, config, 20 * MINUTE).map((s) => [s.playerId, s]),
+    )
+
+    // Each played the full 20, half of it in goal.
+    expect(mins(byId.get('ava')!.playedMs)).toBe(20)
+    expect(mins(byId.get('ava')!.gkMs)).toBe(10)
+    expect(mins(byId.get('bea')!.gkMs)).toBe(10)
+    // Credit: 10 outfield + 10 in goal at half rate = 15 each.
+    expect(mins(byId.get('ava')!.creditMs)).toBe(15)
+    expect(mins(byId.get('bea')!.creditMs)).toBe(15)
+  })
+
+  it('handles the keeper going to the bench for a fresh one', () => {
+    const events: MatchEvent[] = [
+      lineup(),
+      { t: 'CLOCK_START', at: 0, clock: 0 },
+      { t: 'SUB', at: 0, clock: 10 * MINUTE, slotId: 'gk', off: 'ava', on: 'jo' },
+      { t: 'MATCH_END', at: 0, clock: 20 * MINUTE },
+    ]
+    const state = foldMatch(roster, init, events)
+    const byId = new Map(
+      fairShares(roster, state, config, 20 * MINUTE).map((s) => [s.playerId, s]),
+    )
+    expect(mins(byId.get('ava')!.gkMs)).toBe(10)
+    expect(mins(byId.get('ava')!.creditMs)).toBe(5)
+    expect(mins(byId.get('jo')!.gkMs)).toBe(10)
+    expect(mins(byId.get('jo')!.creditMs)).toBe(5)
+  })
+})
+
+describe('preferred positions', () => {
+  it('steers an incoming player toward a slot she likes', () => {
+    const picky: Player[] = roster.map((p) =>
+      p.id === 'jo' ? { ...p, preferred: ['Defence' as const] } : p,
+    )
+    // Only Fay and Jo on the bench, so both certainly come on. Fay is first in owed
+    // order and has no preference; without preference-first matching she would take the
+    // defender slot Jo actually wants.
+    const pickyInit: MatchInit = {
+      slots: DEFAULT_SLOTS,
+      availability: { gia: 'absent', hana: 'absent', ivy: 'absent' },
+    }
+    const events: MatchEvent[] = [
+      lineup(),
+      { t: 'CLOCK_START', at: 0, clock: 0 },
+    ]
+    const state = foldMatch(picky, pickyInit, events)
+    const clock = 10 * MINUTE
+    const shares = fairShares(picky, state, config, clock)
+    const proposals = suggestSubs(picky, state, shares, clock)
+
+    // Jo prefers defence, so whichever swap she is part of should hand her the def slot.
+    const jos = proposals.find((p) => p.on === 'jo')
+    expect(jos).toBeDefined()
+    expect(jos!.slotId).toBe('def')
   })
 })
 

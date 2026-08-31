@@ -1,7 +1,14 @@
 import { useMemo, useState } from 'react'
 import type { MatchEvent } from '../domain/events'
 import { MINUTE, fairShares, foldMatch } from '../domain/engine'
-import { DEFAULT_SLOTS, MID_SLOT, type PlayerId, type Slot, type SlotId } from '../domain/types'
+import {
+  DEFAULT_SLOTS,
+  FORMATION_NAMES,
+  formationFor,
+  type PlayerId,
+  type Slot,
+  type SlotId,
+} from '../domain/types'
 import { dayContextFor, useSeason, type SetupDraft, type StoredMatch } from '../state/store'
 import PitchMap from '../ui/PitchMap'
 
@@ -63,16 +70,28 @@ export default function Setup({ match, onLeave }: { match: StoredMatch; onLeave:
       present.filter((p) => (day.priorGkMs[p.id] ?? 0) > 0).map((p) => p.id),
     )
     const keeperPool = present.filter((p) => !kept.has(p.id))
-    const keeper = [...(keeperPool.length ? keeperPool : present)].sort(
-      (a, b) => (shares.get(b.id)?.dayCreditMs ?? 0) - (shares.get(a.id)?.dayCreditMs ?? 0),
-    )[0]
+    const keeper = [...(keeperPool.length ? keeperPool : present)].sort((a, b) => {
+      // First anyone who actually likes the gloves, then whoever has run the most today.
+      const aLikes = a.preferred?.includes('GK') ? 1 : 0
+      const bLikes = b.preferred?.includes('GK') ? 1 : 0
+      if (aLikes !== bLikes) return bLikes - aLikes
+      return (shares.get(b.id)?.dayCreditMs ?? 0) - (shares.get(a.id)?.dayCreditMs ?? 0)
+    })[0]
     if (!keeper) return
 
-    const rest = owedFirst.filter((p) => p.id !== keeper.id)
+    const starters = owedFirst
+      .filter((p) => p.id !== keeper.id)
+      .slice(0, outfieldSlots.length)
     const assignments: Record<SlotId, PlayerId | null> = {}
-    outfieldSlots.forEach((slot, i) => {
-      assignments[slot.id] = rest[i]?.id ?? null
-    })
+    const remaining = [...starters]
+    for (const slot of outfieldSlots) {
+      // Someone who likes this area gets it; otherwise the most owed girl left.
+      const index = remaining.findIndex(
+        (p) => slot.role && p.preferred?.includes(slot.role),
+      )
+      const pick = index >= 0 ? remaining.splice(index, 1)[0] : remaining.shift()
+      assignments[slot.id] = pick?.id ?? null
+    }
     if (gkSlot) assignments[gkSlot.id] = keeper.id
     update({ gk: keeper.id, assignments })
     setPicking(null)
@@ -87,11 +106,22 @@ export default function Setup({ match, onLeave }: { match: StoredMatch; onLeave:
     setPicking(null)
   }
 
-  const setSixASide = (on: boolean) => {
-    const nextSlots = on ? [...DEFAULT_SLOTS, MID_SLOT] : DEFAULT_SLOTS
+  /** Switch formation by players-per-side. Girls already placed keep matching positions. */
+  const setCount = (count: number) => {
+    const nextSlots = formationFor(count)
     const next: Record<SlotId, PlayerId | null> = {}
-    for (const slot of nextSlots) next[slot.id] = draft.assignments[slot.id] ?? null
+    const placed = new Set<PlayerId>()
+    for (const slot of nextSlots) {
+      const keep = draft.assignments[slot.id]
+      if (keep && !placed.has(keep)) {
+        next[slot.id] = keep
+        placed.add(keep)
+      } else {
+        next[slot.id] = null
+      }
+    }
     update({ slots: nextSlots, assignments: next })
+    setPicking(null)
   }
 
   const start = () => {
@@ -169,10 +199,19 @@ export default function Setup({ match, onLeave }: { match: StoredMatch; onLeave:
           <div className="bench-strip">
             {owedFirst
               .filter((p) => candidates.includes(p))
+              // Stable sort: girls who like this area first, still most-owed within that.
+              .sort((a, b) => {
+                const role = pickingSlot.role
+                const aLikes = role && a.preferred?.includes(role) ? 1 : 0
+                const bLikes = role && b.preferred?.includes(role) ? 1 : 0
+                return bLikes - aLikes
+              })
               .map((player) => {
                 const placed = taken.has(player.id) || draft.gk === player.id
                 const share = shares.get(player.id)
                 const owed = share ? Math.round(-share.deltaMs / MINUTE) : 0
+                const likes =
+                  pickingSlot.role && player.preferred?.includes(pickingSlot.role)
                 return (
                   <button
                     key={player.id}
@@ -180,7 +219,10 @@ export default function Setup({ match, onLeave }: { match: StoredMatch; onLeave:
                     style={{ opacity: placed ? 0.5 : 1 }}
                     onClick={() => pickPlayer(player.id)}
                   >
-                    <span className="who">{player.name}</span>
+                    <span className="who">
+                      {likes ? '★ ' : ''}
+                      {player.name}
+                    </span>
                     <span className="slot-label">
                       {placed ? 'already on' : owed > 0 ? `owed ${owed} min` : 'even'}
                     </span>
@@ -287,13 +329,30 @@ export default function Setup({ match, onLeave }: { match: StoredMatch; onLeave:
       <div className="section-title">FORMAT</div>
       <div className="card">
         <div className="row">
-          <span className="grow small">Six a side (adds a Mid)</span>
-          <button className="btn-sm" onClick={() => setSixASide(slots.length === 5)}>
-            {slots.length > 5 ? 'On' : 'Off'}
-          </button>
+          <span className="grow small">
+            Players per side · {FORMATION_NAMES[slots.length] ?? 'custom'}
+          </span>
+          <div className="inline">
+            <button
+              className="btn-sm"
+              disabled={slots.length <= 4}
+              onClick={() => setCount(slots.length - 1)}
+            >
+              −
+            </button>
+            <strong style={{ minWidth: 28, textAlign: 'center' }}>{slots.length}</strong>
+            <button
+              className="btn-sm"
+              disabled={slots.length >= 8}
+              onClick={() => setCount(slots.length + 1)}
+            >
+              +
+            </button>
+          </div>
         </div>
         <div className="row small muted" style={{ lineHeight: 1.5 }}>
           Half time is a button during the game, not a setting — tap it if it happens.
+          The count can also be changed mid-game.
         </div>
       </div>
 

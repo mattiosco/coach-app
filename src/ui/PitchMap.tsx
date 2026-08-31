@@ -23,8 +23,12 @@ const EXTRA_SPOTS = [
 ]
 
 function layout(slots: Slot[]): (slot: Slot) => { x: number; y: number } {
-  const extras = slots.filter((s) => !SLOT_POSITIONS[s.id])
+  const hasSpot = (s: Slot) => s.x !== undefined || SLOT_POSITIONS[s.id] !== undefined
+  const extras = slots.filter((s) => !hasSpot(s))
   return (slot) => {
+    // Formation slots carry their own coordinates; older stored slots fall back to the
+    // legacy map, and anything unnamed flanks the centre.
+    if (slot.x !== undefined && slot.y !== undefined) return { x: slot.x, y: slot.y }
     const known = SLOT_POSITIONS[slot.id]
     if (known) return known
     const i = extras.indexOf(slot)

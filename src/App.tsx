@@ -64,7 +64,7 @@ export default function App() {
           Fixtures
         </button>
         <button aria-current={tab === 'squad'} onClick={() => setTab('squad')}>
-          Squad
+          Team
         </button>
         <button aria-current={tab === 'check'} onClick={() => setTab('check')}>
           Check

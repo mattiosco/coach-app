@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { hasStarted, matchForFixture, useSeason } from '../state/store'
-import { fetchFixtures, isUpcoming, mergeFixtures } from '../lib/squadi'
+import { fetchFixtures, isUpcoming, mergeFixtures, parseSquadiUrl } from '../lib/squadi'
 import { DEFAULT_CONFIG, type Fixture } from '../domain/types'
 
 const fmt = new Intl.DateTimeFormat(undefined, {
@@ -17,12 +17,14 @@ export default function Fixtures({ onPick }: { onPick: (fixture: Fixture) => voi
   const [error, setError] = useState<string | null>(null)
   const [showPast, setShowPast] = useState(false)
   const [editing, setEditing] = useState<string | null>(null)
+  const [linkOpen, setLinkOpen] = useState(false)
+  const [linkDraft, setLinkDraft] = useState<string | null>(null)
 
   const sync = async () => {
     setSyncing(true)
     setError(null)
     try {
-      const incoming = await fetchFixtures()
+      const incoming = await fetchFixtures(season.squadiUrl)
       dispatch({
         type: 'SET_FIXTURES',
         fixtures: mergeFixtures(season.fixtures, incoming),
@@ -31,7 +33,7 @@ export default function Fixtures({ onPick }: { onPick: (fixture: Fixture) => voi
     } catch (e) {
       setError(
         navigator.onLine
-          ? `Could not reach Squadi (${String(e instanceof Error ? e.message : e)})`
+          ? `Could not sync: ${String(e instanceof Error ? e.message : e)}`
           : 'You are offline — showing the fixtures already saved.',
       )
     } finally {
@@ -47,13 +49,29 @@ export default function Fixtures({ onPick }: { onPick: (fixture: Fixture) => voi
     return hasStarted(existing) ? 'Resume game' : 'Continue setting up'
   }
 
+  const saveLink = () => {
+    const url = (linkDraft ?? '').trim()
+    if (url) {
+      try {
+        parseSquadiUrl(url)
+      } catch (e) {
+        setError(String(e instanceof Error ? e.message : e))
+        return
+      }
+    }
+    dispatch({ type: 'SET_SQUADI_URL', url })
+    setError(null)
+    setLinkOpen(false)
+    setLinkDraft(null)
+  }
+
   const upcoming = season.fixtures.filter((f) => isUpcoming(f))
   const past = season.fixtures.filter((f) => !isUpcoming(f))
   const shown = showPast ? season.fixtures : upcoming
 
   return (
     <div className="screen">
-      <h2 style={{ fontSize: 24, marginBottom: 4 }}>Fixtures</h2>
+      <h2 style={{ fontSize: 24, marginBottom: 4 }}>Fixtures — {season.name}</h2>
       <p className="muted small" style={{ margin: '0 0 14px' }}>
         {season.fixturesSyncedAt
           ? `Synced ${new Date(season.fixturesSyncedAt).toLocaleString()}`
@@ -61,7 +79,7 @@ export default function Fixtures({ onPick }: { onPick: (fixture: Fixture) => voi
       </p>
 
       <div className="inline wrap">
-        <button onClick={() => void sync()} disabled={syncing}>
+        <button onClick={() => void sync()} disabled={syncing || !season.squadiUrl}>
           {syncing ? 'Syncing…' : 'Sync from Squadi'}
         </button>
         <button
@@ -85,7 +103,41 @@ export default function Fixtures({ onPick }: { onPick: (fixture: Fixture) => voi
         >
           Add by hand
         </button>
+        <button className="btn-ghost btn-sm" onClick={() => setLinkOpen((v) => !v)}>
+          {season.squadiUrl ? 'Squadi link' : 'Set Squadi link'}
+        </button>
       </div>
+
+      {linkOpen && (
+        <div className="card" style={{ marginTop: 10 }}>
+          <div className="row stack" style={{ alignItems: 'stretch' }}>
+            <label className="small muted">
+              This team&apos;s Squadi draw link. On squadi.com open the draw, pick your team,
+              then copy the page address here.
+            </label>
+            <input
+              type="text"
+              value={linkDraft ?? season.squadiUrl}
+              placeholder="https://registration.squadi.com/competitions?…&teamId=…"
+              onChange={(e) => setLinkDraft(e.target.value)}
+            />
+            <div className="inline">
+              <button className="btn-primary grow" onClick={saveLink}>
+                Save link
+              </button>
+              <button
+                className="btn-ghost btn-sm"
+                onClick={() => {
+                  setLinkOpen(false)
+                  setLinkDraft(null)
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {error && (
         <p className="small" style={{ color: 'var(--amber)', lineHeight: 1.5 }}>
@@ -136,7 +188,8 @@ export default function Fixtures({ onPick }: { onPick: (fixture: Fixture) => voi
 
       {shown.length === 0 && (
         <p className="muted small" style={{ marginTop: 20, lineHeight: 1.5 }}>
-          No fixtures yet. Sync from Squadi while you have signal, or add one by hand.
+          No fixtures yet. Set this team&apos;s Squadi link and sync while you have signal, or
+          add one by hand.
         </p>
       )}
 

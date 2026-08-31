@@ -71,7 +71,41 @@ export function suggestSubs(
     proposals.push({ slotId: off.slot.id, off: off.playerId, on: on.playerId, gainMs })
   }
 
-  return proposals
+  return matchPreferences(proposals, state, named)
+}
+
+/**
+ * Reshuffle which vacated slot each incoming player takes so that, where possible, a girl
+ * lands somewhere she likes playing. The set of who comes off and who goes on is already
+ * decided — this only rearranges the destinations.
+ */
+function matchPreferences(
+  proposals: ProposedSub[],
+  state: MatchState,
+  named: Map<PlayerId, Player>,
+): ProposedSub[] {
+  if (proposals.length < 2) return proposals
+
+  const roleOf = (slotId: SlotId) => state.slots.find((s) => s.id === slotId)?.role
+  const open = [...proposals]
+  const assigned = new Map<PlayerId, ProposedSub>()
+
+  // Girls with a matching preference choose first, so someone indifferent cannot walk
+  // off with the one slot her teammate actually wanted.
+  for (const proposal of proposals) {
+    const preferred = named.get(proposal.on)?.preferred
+    if (!preferred?.length) continue
+    const index = open.findIndex((p) => {
+      const role = roleOf(p.slotId)
+      return role !== undefined && preferred.includes(role)
+    })
+    if (index >= 0) assigned.set(proposal.on, open.splice(index, 1)[0])
+  }
+  for (const proposal of proposals) {
+    if (!assigned.has(proposal.on)) assigned.set(proposal.on, open.shift()!)
+  }
+
+  return proposals.map((p) => ({ ...assigned.get(p.on)!, on: p.on }))
 }
 
 /** Which shift number the clock is in, 1-based. */

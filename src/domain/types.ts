@@ -2,9 +2,15 @@ export type PlayerId = string
 export type SlotId = string
 export type MatchId = string
 
+/** Broad areas of the park a girl can prefer. Kept coarse so it survives formation changes. */
+export type Role = 'GK' | 'Defence' | 'Midfield' | 'Attack'
+export const ROLES: Role[] = ['GK', 'Defence', 'Midfield', 'Attack']
+
 export interface Player {
   id: PlayerId
   name: string
+  /** Optional preferred areas. Used to order pickers and steer suggestions, never to force. */
+  preferred?: Role[]
 }
 
 /** A position on the park. `isGK` is pinned: the keeper never enters the rotation. */
@@ -12,12 +18,16 @@ export interface Slot {
   id: SlotId
   label: string
   isGK: boolean
+  role?: Role
+  /** Where the magnet sits on the pitch map, as a percentage of the box. */
+  x?: number
+  y?: number
 }
 
 export type Availability =
   | 'available' // on the field or on the bench
   | 'absent' // not at the ground
-  | 'loaned' // lent to the other team; her clock stops
+  | 'loaned' // lent to the other team; still playing, just in their shirt
 
 export interface MatchConfig {
   /** Total running minutes, excluding any break. */
@@ -39,8 +49,8 @@ export interface MatchConfig {
   gkWeight: number
 }
 
+/** Squadi match id where known, otherwise a local id. */
 export interface Fixture {
-  /** Squadi match id where known, otherwise a local id. */
   id: string
   round: string
   /** ISO instant of kickoff. */
@@ -56,15 +66,76 @@ export interface Fixture {
   source?: 'squadi' | 'manual'
 }
 
-export const DEFAULT_SLOTS: Slot[] = [
-  { id: 'gk', label: 'GK', isGK: true },
-  { id: 'def', label: 'Defender', isGK: false },
-  { id: 'left', label: 'Left', isGK: false },
-  { id: 'centre', label: 'Centre', isGK: false },
-  { id: 'right', label: 'Right', isGK: false },
-]
+const slot = (
+  id: SlotId,
+  label: string,
+  role: Role,
+  x: number,
+  y: number,
+): Slot => ({ id, label, isGK: role === 'GK', role, x, y })
 
-export const MID_SLOT: Slot = { id: 'mid', label: 'Mid', isGK: false }
+/**
+ * One formation per players-per-side count. Coordinates are laid out for the sideline
+ * view: our goal at the bottom, attacking up the screen.
+ */
+export const FORMATIONS: Record<number, Slot[]> = {
+  4: [
+    slot('gk', 'GK', 'GK', 50, 87),
+    slot('def', 'Defender', 'Defence', 50, 60),
+    slot('left', 'Left', 'Attack', 28, 24),
+    slot('right', 'Right', 'Attack', 72, 24),
+  ],
+  5: [
+    slot('gk', 'GK', 'GK', 50, 87),
+    slot('def', 'Defender', 'Defence', 50, 64),
+    slot('left', 'Left', 'Attack', 19, 24),
+    slot('centre', 'Centre', 'Attack', 50, 20),
+    slot('right', 'Right', 'Attack', 81, 24),
+  ],
+  6: [
+    slot('gk', 'GK', 'GK', 50, 87),
+    slot('def', 'Defender', 'Defence', 50, 68),
+    slot('mid', 'Mid', 'Midfield', 50, 46),
+    slot('left', 'Left', 'Attack', 20, 26),
+    slot('right', 'Right', 'Attack', 80, 26),
+    slot('fwd', 'Striker', 'Attack', 50, 14),
+  ],
+  7: [
+    slot('gk', 'GK', 'GK', 50, 88),
+    slot('def_l', 'Def L', 'Defence', 30, 68),
+    slot('def_r', 'Def R', 'Defence', 70, 68),
+    slot('mid_l', 'Mid L', 'Midfield', 28, 44),
+    slot('mid_r', 'Mid R', 'Midfield', 72, 44),
+    slot('fwd_l', 'Fwd L', 'Attack', 30, 18),
+    slot('fwd_r', 'Fwd R', 'Attack', 70, 18),
+  ],
+  8: [
+    slot('gk', 'GK', 'GK', 50, 88),
+    slot('def_l', 'Def L', 'Defence', 30, 70),
+    slot('def_r', 'Def R', 'Defence', 70, 70),
+    slot('mid_l', 'Mid L', 'Midfield', 26, 48),
+    slot('mid_r', 'Mid R', 'Midfield', 74, 48),
+    slot('left', 'Left', 'Attack', 20, 26),
+    slot('right', 'Right', 'Attack', 80, 26),
+    slot('fwd', 'Striker', 'Attack', 50, 14),
+  ],
+}
+
+export const FORMATION_NAMES: Record<number, string> = {
+  4: 'GK-1-2',
+  5: 'GK-1-3',
+  6: 'GK-1-1-2-1',
+  7: 'GK-2-2-2',
+  8: 'GK-2-2-2-1',
+}
+
+export function formationFor(count: number): Slot[] {
+  return FORMATIONS[Math.min(8, Math.max(4, count))]
+}
+
+export const DEFAULT_SLOTS: Slot[] = FORMATIONS[5]
+
+export const MID_SLOT: Slot = slot('mid', 'Mid', 'Midfield', 50, 45)
 
 export const DEFAULT_CONFIG: MatchConfig = {
   totalMinutes: 20,
@@ -74,8 +145,8 @@ export const DEFAULT_CONFIG: MatchConfig = {
 }
 
 /**
- * Where each position sits on the pitch map, as a percentage of the box. The girls read
- * this from the sideline, so the shape has to match what they see facing the park.
+ * Fallback spots for slots stored before coordinates lived on the slot itself, so old
+ * matches still replay onto a sensible map.
  */
 export const SLOT_POSITIONS: Record<string, { x: number; y: number }> = {
   gk: { x: 50, y: 87 },
@@ -85,5 +156,3 @@ export const SLOT_POSITIONS: Record<string, { x: number; y: number }> = {
   centre: { x: 50, y: 20 },
   right: { x: 81, y: 24 },
 }
-
-
