@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import { SLOT_POSITIONS, type PlayerId, type Slot, type SlotId } from '../domain/types'
 
 export interface MagnetInfo {
@@ -47,17 +48,38 @@ export default function PitchMap({
   nameOf,
   selectedSlotId,
   onSlotTap,
+  onSlotHold,
+  shuffling = false,
 }: {
   slots: Slot[]
   fill: (slotId: SlotId) => MagnetInfo
   nameOf: (id: PlayerId | null) => string
   selectedSlotId?: SlotId | null
   onSlotTap: (slotId: SlotId) => void
+  /** Held down on a magnet — used to start moving players around. */
+  onSlotHold?: (slotId: SlotId) => void
+  shuffling?: boolean
 }) {
   const positionOf = layout(slots)
+  const holdTimer = useRef<number | undefined>(undefined)
+  const held = useRef(false)
+
+  useEffect(() => () => window.clearTimeout(holdTimer.current), [])
+
+  const startHold = (slotId: SlotId) => {
+    if (!onSlotHold) return
+    held.current = false
+    window.clearTimeout(holdTimer.current)
+    holdTimer.current = window.setTimeout(() => {
+      held.current = true
+      navigator.vibrate?.(30)
+      onSlotHold(slotId)
+    }, 450)
+  }
+  const cancelHold = () => window.clearTimeout(holdTimer.current)
 
   return (
-    <div className="pitch">
+    <div className={`pitch${shuffling ? ' shuffling' : ''}`}>
       <div className="goal-box top" />
       <div className="goal-box bottom" />
 
@@ -79,7 +101,19 @@ export default function PitchMap({
               .filter(Boolean)
               .join(' ')}
             style={{ left: `${x}%`, top: `${y}%` }}
-            onClick={() => onSlotTap(slot.id)}
+            onPointerDown={() => startHold(slot.id)}
+            onPointerUp={cancelHold}
+            onPointerLeave={cancelHold}
+            onPointerCancel={cancelHold}
+            onContextMenu={(e) => e.preventDefault()}
+            onClick={() => {
+              // A completed hold already did its job; do not also treat it as a tap.
+              if (held.current) {
+                held.current = false
+                return
+              }
+              onSlotTap(slot.id)
+            }}
           >
             <span className="pos">{slot.label}</span>
             <span className="who">{info.playerId ? nameOf(info.playerId) : 'Tap'}</span>

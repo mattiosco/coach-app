@@ -9,7 +9,13 @@ import {
 } from '../domain/engine'
 import type { MatchEvent, NewMatchEvent } from '../domain/events'
 import { msToNextShift, shiftNumber, suggestSubs } from '../domain/suggest'
-import { DEFAULT_CONFIG, formationFor, type Availability, type PlayerId } from '../domain/types'
+import {
+  DEFAULT_CONFIG,
+  formationFor,
+  type Availability,
+  type PlayerId,
+  type SlotId,
+} from '../domain/types'
 import { acquireWakeLock } from '../lib/platform'
 import {
   activeMatch,
@@ -158,6 +164,17 @@ export default function Game({ onNoMatch }: { onNoMatch: () => void }) {
   )
 }
 
+/** What the "just changed" panel holds: substitutions and positional moves alike. */
+type RecentChange =
+  | { kind: 'sub'; slotId: SlotId; off: PlayerId | null; on: PlayerId }
+  | {
+      kind: 'move'
+      slotA: SlotId
+      slotB: SlotId
+      playerA: PlayerId | null
+      playerB: PlayerId | null
+    }
+
 function Live({
   match,
   state,
@@ -172,9 +189,13 @@ function Live({
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null)
   const [ackedShift, setAckedShift] = useState(0)
   /** Changes just made, kept on screen while everyone finds their new spot. */
-  const [recent, setRecent] = useState<PlannedSub[] | null>(null)
+  const [recent, setRecent] = useState<RecentChange[] | null>(null)
   const recentTimer = useRef<number | undefined>(undefined)
   const [suggestMsg, setSuggestMsg] = useState<string | null>(null)
+  /** Moving players between positions, rather than subbing anyone on or off. */
+  const [moving, setMoving] = useState(false)
+  /** The match length we have already blown full time on, so Resume is not overridden. */
+  const autoPausedAt = useRef<number | null>(null)
 
   const running = state.runningSince !== null
   const planned = match.plannedSubs
@@ -238,6 +259,27 @@ function Live({
     }
   }, [shiftDue, shift])
 
+  /**
+   * Stop the clock at full time on our own.
+   *
+   * The whistle goes and the phone is in a pocket; left alone the clock kept running and
+   * every girl on the park quietly banked minutes she never played. The pause is stamped
+   * at exactly full time rather than whenever this fires, so a late notice costs nothing.
+   * Resuming is still allowed — we only ever do this once per match length, so adding
+   * time and playing on works.
+   */
+  useEffect(() => {
+    if (!running || clock < totalMs) return
+    if (autoPausedAt.current === totalMs) return
+    autoPausedAt.current = totalMs
+    dispatch({
+      type: 'APPEND',
+      id: match.id,
+      event: { t: 'CLOCK_PAUSE', at: Date.now(), clock: totalMs },
+    })
+    navigator.vibrate?.([300, 120, 300])
+  }, [running, clock, totalMs, match.id, dispatch])
+
   const plannedBySlot = new Map(planned.map((p) => [p.slotId, p]))
   const plannedOn = new Set(planned.map((p) => p.on))
 
@@ -248,8 +290,39 @@ function Live({
   const setPlanned = (next: PlannedSub[]) =>
     dispatch({ type: 'PLAN_SUBS', id: match.id, planned: next })
 
+  const showRecent = (changes: RecentChange[]) => {
+    setRecent(changes)
+    window.clearTimeout(recentTimer.current)
+    recentTimer.current = window.setTimeout(() => setRecent(null), 60_000)
+  }
+
+  const startMoving = (slotId?: SlotId) => {
+    setMoving(true)
+    setSuggestMsg(null)
+    setSelectedSlot(slotId ?? null)
+  }
+
   /** Tapping a position selects it; tapping it again clears any plan on it. */
   const handleSlot = (slotId: string) => {
+    if (moving) {
+      // Two taps swap the girls standing in those spots. Nobody comes off, so no minutes
+      // change hands — it is only the shape of the team that moves.
+      if (!selectedSlot) {
+        setSelectedSlot(slotId)
+        return
+      }
+      if (selectedSlot === slotId) {
+        setSelectedSlot(null)
+        return
+      }
+      const playerA = state.onField[selectedSlot] ?? null
+      const playerB = state.onField[slotId] ?? null
+      append({ t: 'SWAP', slotA: selectedSlot, slotB: slotId })
+      showRecent([{ kind: 'move', slotA: selectedSlot, slotB: slotId, playerA, playerB }])
+      setSelectedSlot(null)
+      navigator.vibrate?.(40)
+      return
+    }
     if (plannedBySlot.has(slotId) && selectedSlot === slotId) {
       setPlanned(planned.filter((p) => p.slotId !== slotId))
       setSelectedSlot(null)
@@ -260,7 +333,7 @@ function Live({
 
   /** Tapping a bench player plans her into the selected position. */
   const handleBench = (playerId: PlayerId) => {
-    if (!selectedSlot) return
+    if (moving || !selectedSlot) return
     const next = planned.filter((p) => p.slotId !== selectedSlot && p.on !== playerId)
     setPlanned([
       ...next,
@@ -295,9 +368,7 @@ function Live({
     }
     // Hold the list up for a minute: the girls are still sorting themselves out, and
     // this is what you check them against.
-    setRecent(planned)
-    window.clearTimeout(recentTimer.current)
-    recentTimer.current = window.setTimeout(() => setRecent(null), 60_000)
+    showRecent(planned.map((p) => ({ kind: 'sub', slotId: p.slotId, off: p.off, on: p.on })))
 
     setPlanned([])
     setAckedShift(shift)
@@ -315,6 +386,19 @@ function Live({
   }, [planned.length])
 
   useEffect(() => () => window.clearTimeout(recentTimer.current), [])
+
+  const addMinutes = (extra: number) =>
+    dispatch({
+      type: 'SET_CONFIG',
+      id: match.id,
+      config: { ...match.config, totalMinutes: match.config.totalMinutes + extra },
+    })
+
+  const endMatch = () => {
+    if (!confirm('End the match and save it?')) return
+    append({ t: 'MATCH_END' })
+    dispatch({ type: 'END_MATCH', id: match.id, at: Date.now() })
+  }
 
   const outfieldCount = state.slots.filter((s) => !s.isGK).length
 
@@ -373,6 +457,28 @@ function Live({
         </button>
       </div>
 
+      {clock >= totalMs && (
+        <div className="stack" style={{ marginBottom: 12 }}>
+          <div className="shift-banner">
+            FULL TIME — {match.config.totalMinutes} min played, clock stopped
+          </div>
+          <div className="inline">
+            <button className="grow" onClick={() => addMinutes(1)}>
+              +1 min
+            </button>
+            <button className="grow" onClick={() => addMinutes(5)}>
+              +5 min
+            </button>
+            <button className="btn-primary grow" onClick={endMatch}>
+              End match
+            </button>
+          </div>
+          <p className="muted small" style={{ margin: 0, lineHeight: 1.5 }}>
+            Add time if it runs over, then press Resume.
+          </p>
+        </div>
+      )}
+
       {shiftDue && planned.length === 0 && (
         <div className="stack" style={{ marginBottom: 12 }}>
           <div className="shift-banner">SUB DUE — shift {shift}</div>
@@ -420,12 +526,38 @@ function Live({
           incoming: plannedBySlot.get(slotId)?.on ?? null,
         })}
         onSlotTap={handleSlot}
+        onSlotHold={startMoving}
+        shuffling={moving}
       />
 
-      {planned.length === 0 && (
-        <button className="btn-block" style={{ marginTop: 12 }} onClick={suggestNow}>
-          Suggest subs
-        </button>
+      {planned.length === 0 && !moving && (
+        <div className="inline" style={{ marginTop: 12 }}>
+          <button className="grow" onClick={suggestNow}>
+            Suggest subs
+          </button>
+          <button className="grow" onClick={() => startMoving()}>
+            Move players
+          </button>
+        </div>
+      )}
+
+      {moving && (
+        <div className="stack" style={{ marginTop: 12 }}>
+          <div className="shift-banner">
+            {selectedSlot
+              ? `MOVING ${(state.slots.find((s) => s.id === selectedSlot)?.label ?? '').toUpperCase()} — TAP WHERE SHE GOES`
+              : 'MOVING PLAYERS — TAP TWO POSITIONS TO SWAP'}
+          </div>
+          <button
+            className="btn-block"
+            onClick={() => {
+              setMoving(false)
+              setSelectedSlot(null)
+            }}
+          >
+            Done moving
+          </button>
+        </div>
       )}
       {suggestMsg && (
         <p className="muted small" style={{ margin: '8px 0 0', lineHeight: 1.5 }}>
@@ -436,15 +568,28 @@ function Live({
       {recent && recent.length > 0 && planned.length === 0 && (
         <div className="card" style={{ marginTop: 12, borderColor: 'var(--green-dim)' }}>
           <div className="row small muted">Just changed — check they are in the right spots</div>
-          {recent.map((p) => (
-            <div className="row small" key={p.slotId}>
-              <span className="grow">
-                <strong style={{ color: 'var(--green)' }}>{nameOf(p.on)}</strong> on for{' '}
-                {nameOf(p.off)}
-              </span>
-              <span className="muted">{state.slots.find((x) => x.id === p.slotId)?.label}</span>
-            </div>
-          ))}
+          {recent.map((c) =>
+            c.kind === 'sub' ? (
+              <div className="row small" key={`sub-${c.slotId}`}>
+                <span className="grow">
+                  <strong style={{ color: 'var(--green)' }}>{nameOf(c.on)}</strong> on for{' '}
+                  {nameOf(c.off)}
+                </span>
+                <span className="muted">{state.slots.find((x) => x.id === c.slotId)?.label}</span>
+              </div>
+            ) : (
+              <div className="row small" key={`move-${c.slotA}-${c.slotB}`}>
+                <span className="grow">
+                  <strong style={{ color: 'var(--green)' }}>{nameOf(c.playerA)}</strong> and{' '}
+                  <strong style={{ color: 'var(--green)' }}>{nameOf(c.playerB)}</strong> swapped
+                </span>
+                <span className="muted">
+                  {state.slots.find((x) => x.id === c.slotA)?.label} /{' '}
+                  {state.slots.find((x) => x.id === c.slotB)?.label}
+                </span>
+              </div>
+            ),
+          )}
           <div className="row">
             <button className="btn-ghost btn-sm btn-block" onClick={() => setRecent(null)}>
               Done
@@ -485,9 +630,11 @@ function Live({
       )}
 
       <div className="section-title">
-        {selectedSlot
-          ? `WHO GOES TO ${(state.slots.find((s) => s.id === selectedSlot)?.label ?? '').toUpperCase()}?`
-          : 'BENCH — MOST OWED FIRST'}
+        {moving
+          ? 'BENCH — NOT USED WHILE MOVING'
+          : selectedSlot
+            ? `WHO GOES TO ${(state.slots.find((s) => s.id === selectedSlot)?.label ?? '').toUpperCase()}?`
+            : 'BENCH — MOST OWED FIRST'}
       </div>
       <div className="bench-strip">
         {[...bench]
@@ -498,7 +645,7 @@ function Live({
               <button
                 key={player.id}
                 className={`bench-chip ${plannedOn.has(player.id) ? 'planned' : ''}`}
-                disabled={!selectedSlot && !plannedOn.has(player.id)}
+                disabled={moving || (!selectedSlot && !plannedOn.has(player.id))}
                 style={{ opacity: selectedSlot || plannedOn.has(player.id) ? 1 : 0.85 }}
                 onClick={() => handleBench(player.id)}
               >
@@ -515,10 +662,11 @@ function Live({
         {bench.length === 0 && <p className="muted small">Nobody on the bench.</p>}
       </div>
 
-      {!selectedSlot && planned.length === 0 && (
+      {!selectedSlot && planned.length === 0 && !moving && (
         <p className="muted small" style={{ marginTop: 10, lineHeight: 1.5 }}>
           Tap a position on the pitch, then tap who is going there. That plans the change
-          so you can tell the girls — nothing moves until you tap Make subs.
+          so you can tell the girls — nothing moves until you tap Make subs. To rearrange
+          the girls already on, tap Move players or hold down on a position.
         </p>
       )}
 
@@ -702,14 +850,7 @@ function Live({
         <button className="btn-ghost" onClick={onLeave}>
           Leave the game screen — this is saved
         </button>
-        <button
-          className="btn-ghost btn-danger"
-          onClick={() => {
-            if (!confirm('End the match and save it?')) return
-            append({ t: 'MATCH_END' })
-            dispatch({ type: 'END_MATCH', id: match.id, at: Date.now() })
-          }}
-        >
+        <button className="btn-ghost btn-danger" onClick={endMatch}>
           End match
         </button>
         <button

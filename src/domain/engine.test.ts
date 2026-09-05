@@ -335,6 +335,71 @@ describe('match day', () => {
   })
 })
 
+describe('full time', () => {
+  it('caps the clock when the whistle pause is stamped at full time', () => {
+    const events: MatchEvent[] = [
+      lineup(),
+      { t: 'CLOCK_START', at: 0, clock: 0 },
+      // Nobody stopped the clock; the app pauses itself, stamping exactly full time
+      // even though it noticed ten minutes late.
+      { t: 'CLOCK_PAUSE', at: 30 * MINUTE, clock: 20 * MINUTE },
+    ]
+    const state = foldMatch(roster, init, events)
+
+    // Wall time keeps moving; the game clock does not.
+    expect(currentClock(state, 40 * MINUTE)).toBe(20 * MINUTE)
+    expect(mins(minutesPlayedMs(state, 'bea', currentClock(state, 40 * MINUTE)))).toBe(20)
+    expect(mins(minutesPlayedMs(state, 'ava', currentClock(state, 60 * MINUTE)))).toBe(20)
+  })
+
+  it('lets added time run on from where full time stopped', () => {
+    const events: MatchEvent[] = [
+      lineup(),
+      { t: 'CLOCK_START', at: 0, clock: 0 },
+      { t: 'CLOCK_PAUSE', at: 100_000, clock: 20 * MINUTE },
+      // The coach adds a minute and plays on.
+      { t: 'CLOCK_START', at: 200_000, clock: 20 * MINUTE },
+    ]
+    const state = foldMatch(roster, init, events)
+    expect(mins(currentClock(state, 200_000 + MINUTE))).toBe(21)
+  })
+})
+
+describe('moving players', () => {
+  it('swaps two on the park without anyone gaining or losing minutes', () => {
+    const events: MatchEvent[] = [
+      lineup(),
+      { t: 'CLOCK_START', at: 0, clock: 0 },
+      { t: 'SWAP', at: 0, clock: 7 * MINUTE, slotA: 'def', slotB: 'centre' },
+      { t: 'MATCH_END', at: 0, clock: 20 * MINUTE },
+    ]
+    const state = foldMatch(roster, init, events)
+
+    expect(state.onField.def).toBe('dot')
+    expect(state.onField.centre).toBe('bea')
+    // Neither left the park, so both are credited the full twenty.
+    expect(mins(minutesPlayedMs(state, 'bea', 20 * MINUTE))).toBe(20)
+    expect(mins(minutesPlayedMs(state, 'dot', 20 * MINUTE))).toBe(20)
+  })
+
+  it('moves a girl into a spot left empty by a loan', () => {
+    const events: MatchEvent[] = [
+      lineup(),
+      { t: 'CLOCK_START', at: 0, clock: 0 },
+      // Cleo is lent to the other team, leaving Left empty.
+      { t: 'AVAILABILITY', at: 0, clock: 5 * MINUTE, playerId: 'cleo', status: 'loaned' },
+      { t: 'SWAP', at: 0, clock: 6 * MINUTE, slotA: 'centre', slotB: 'left' },
+      { t: 'MATCH_END', at: 0, clock: 20 * MINUTE },
+    ]
+    const state = foldMatch(roster, init, events)
+
+    expect(state.onField.left).toBe('dot')
+    expect(state.onField.centre).toBeNull()
+    // Dot simply changed spots; she was never off.
+    expect(mins(minutesPlayedMs(state, 'dot', 20 * MINUTE))).toBe(20)
+  })
+})
+
 describe('goalkeeper subs', () => {
   it('splits the buckets when the keeper swaps with an outfielder at half time', () => {
     const events: MatchEvent[] = [

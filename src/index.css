@@ -369,3 +369,15 @@ button:disabled { opacity: 0.4; }
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
+
+/* A long press must not select the name or pop the OS callout menu. */
+.magnet {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Moving players around rather than subbing: the whole pitch changes character. */
+.pitch.shuffling { border-color: var(--amber); }
+.pitch.shuffling .magnet { border-color: var(--amber); border-style: dashed; }
+.pitch.shuffling .magnet.selected { border-style: solid; }
