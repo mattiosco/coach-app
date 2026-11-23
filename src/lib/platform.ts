@@ -47,21 +47,6 @@ export function probeCapabilities(): Capability[] {
   ]
 }
 
-/** Keeps the screen on while a game clock is running. Released automatically on unmount. */
-export async function acquireWakeLock(): Promise<(() => void) | null> {
-  const nav = navigator as Navigator & {
-    wakeLock?: { request: (type: 'screen') => Promise<{ release: () => Promise<void> }> }
-  }
-  if (!nav.wakeLock) return null
-  try {
-    const sentinel = await nav.wakeLock.request('screen')
-    return () => void sentinel.release()
-  } catch {
-    // Denied (usually because the tab is backgrounded). Not fatal.
-    return null
-  }
-}
-
 export type ServiceWorkerStatus =
   | 'unsupported'
   | 'none'

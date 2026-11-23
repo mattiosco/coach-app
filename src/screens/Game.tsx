@@ -16,7 +16,7 @@ import {
   type PlayerId,
   type SlotId,
 } from '../domain/types'
-import { acquireWakeLock } from '../lib/platform'
+import { useWakeLock } from '../lib/useWakeLock'
 import {
   activeMatch,
   dayContextFor,
@@ -34,6 +34,11 @@ import Summary from './Summary'
 export default function Game({ onNoMatch }: { onNoMatch: () => void }) {
   const { season, dispatch } = useSeason()
   const match = activeMatch(season)
+
+  // Keep the screen on from setup to the final whistle, breaks included — not just while
+  // the clock runs. Once the game is over, or the coach leaves this screen, the screen
+  // may sleep as normal.
+  useWakeLock(!!match && !match.endedAt)
 
   if (!match) {
     const parked = season.matches.filter((m) => !m.endedAt)
@@ -206,21 +211,6 @@ function Live({
     if (!running) return
     const id = setInterval(() => tick((n) => n + 1), 250)
     return () => clearInterval(id)
-  }, [running])
-
-  // Keep the screen awake while the game is on, and let it sleep when paused.
-  useEffect(() => {
-    if (!running) return
-    let release: (() => void) | null = null
-    let cancelled = false
-    void acquireWakeLock().then((r) => {
-      if (cancelled) r?.()
-      else release = r
-    })
-    return () => {
-      cancelled = true
-      release?.()
-    }
   }, [running])
 
   const clock = currentClock(state, Date.now())
