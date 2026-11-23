@@ -145,7 +145,7 @@ export default function Game({ onNoMatch }: { onNoMatch: () => void }) {
 
         {season.players.length < 2 && (
           <p className="muted small" style={{ marginTop: 12 }}>
-            Add some players on the Squad tab first.
+            Add some players on the Team tab first.
           </p>
         )}
       </div>
